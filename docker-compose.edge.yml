@@ -1,0 +1,81 @@
+# SeixasTec — Gestão Total :: EDGE (loja)
+# Papel: servidor LOCAL da loja. Atende os PDVs pela rede local e FUNCIONA
+# OFFLINE. Sincroniza com a central quando há internet (puxa catálogo, empurra
+# vendas/estoque/caixa). Rode isto no PC do caixa ou num mini-PC da loja.
+#
+#   docker compose -f docker-compose.edge.yml --env-file .env.edge up -d
+#
+# Variáveis obrigatórias (ver .env.example): LOJA_ID, EDGE_SYNC_TOKEN, CENTRAL_URL.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: seixastec_edge_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cpvarejo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cpvarejo}
+      POSTGRES_DB: ${POSTGRES_DB:-cpvarejo}
+    volumes:
+      - edge_db_data:/var/lib/postgresql/data
+    ports:
+      - "${EDGE_DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cpvarejo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: seixastec_edge_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ROLE: edge
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cpvarejo}:${POSTGRES_PASSWORD:-cpvarejo}@db:5432/${POSTGRES_DB:-cpvarejo}
+      JWT_SECRET: ${JWT_SECRET:-troque-este-segredo}
+      PORT: 4000
+      NODE_ENV: ${NODE_ENV:-production}
+      UPLOAD_DIR: /app/uploads
+      # Identidade da loja e credenciais de sync com a central.
+      LOJA_ID: ${LOJA_ID}
+      EDGE_SYNC_TOKEN: ${EDGE_SYNC_TOKEN}
+      CENTRAL_URL: ${CENTRAL_URL:-http://host.docker.internal:4000}
+      SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-15000}
+      # Fiscal (NFC-e/NF-e) — certificado fica em volume dedicado, NUNCA público.
+      FISCAL_HABILITADO: ${FISCAL_HABILITADO:-false}
+      FISCAL_CERT_PATH: ${FISCAL_CERT_PATH:-/app/certs/certificado.pfx}
+      FISCAL_CERT_SENHA: ${FISCAL_CERT_SENHA:-}
+      FISCAL_CSC: ${FISCAL_CSC:-}
+      FISCAL_ID_CSC: ${FISCAL_ID_CSC:-}
+    ports:
+      - "${EDGE_BACKEND_PORT:-4001}:4000"
+    volumes:
+      - edge_uploads:/app/uploads
+      - edge_certs:/app/certs
+    extra_hosts:
+      # Permite alcançar a central publicada no host (útil ao testar central+edge
+      # na mesma máquina). Em produção, use o domínio/IP real da VPS em CENTRAL_URL.
+      - "host.docker.internal:host-gateway"
+
+  pdv:
+    build:
+      context: ./pdv
+      args:
+        # O PDV fala com o backend do EDGE (local). Em produção, use o IP/host do
+        # servidor da loja na LAN (ex.: http://192.168.0.10:4001).
+        VITE_API_URL: ${EDGE_PUBLIC_URL:-http://localhost:4001}
+    container_name: seixastec_edge_pdv
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${PDV_PORT:-8090}:80"
+
+volumes:
+  edge_db_data:
+  edge_uploads:
+  edge_certs:

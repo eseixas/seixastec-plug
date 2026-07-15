@@ -1,0 +1,117 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { prisma } from '../lib/prisma.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
+import { IS_EDGE, LOJA_ID } from '../config.js';
+import { enfileirar } from '../sync/outbox.js';
+
+const router = Router();
+
+// No edge, o caixa pertence à loja fixa; na central usa o que veio no corpo.
+const resolverLoja = (lojaId) => (IS_EDGE ? LOJA_ID : lojaId || null);
+
+// Retorna o caixa aberto do usuário logado (ou null).
+router.get('/atual', asyncHandler(async (req, res) => {
+  const caixa = await prisma.caixa.findFirst({
+    where: { usuarioId: req.user.sub, aberto: true },
+    include: { movimentos: true },
+  });
+  res.json(caixa);
+}));
+
+router.post('/abrir', asyncHandler(async (req, res) => {
+  const { valorAbertura, lojaId, pdvTerminalId } = z
+    .object({
+      valorAbertura: z.coerce.number().nonnegative(),
+      lojaId: z.string().optional().nullable(),
+      pdvTerminalId: z.string().optional().nullable(),
+    })
+    .parse(req.body);
+  const existente = await prisma.caixa.findFirst({
+    where: { usuarioId: req.user.sub, aberto: true },
+  });
+  if (existente) throw Object.assign(new Error('Já existe um caixa aberto'), { status: 400 });
+  const caixa = await prisma.$transaction(async (tx) => {
+    const c = await tx.caixa.create({
+      data: { usuarioId: req.user.sub, valorAbertura, lojaId: resolverLoja(lojaId), pdvTerminalId: pdvTerminalId || null },
+    });
+    await enfileirar(tx, 'caixa', c.id, c);
+    return c;
+  });
+  res.status(201).json(caixa);
+}));
+
+router.post('/:id/movimento', asyncHandler(async (req, res) => {
+  const { tipo, valor, motivo } = z
+    .object({
+      tipo: z.enum(['SUPRIMENTO', 'SANGRIA']),
+      valor: z.coerce.number().positive(),
+      motivo: z.string().optional().nullable(),
+    })
+    .parse(req.body);
+  const mov = await prisma.$transaction(async (tx) => {
+    const m = await tx.movimentoCaixa.create({
+      data: { caixaId: req.params.id, tipo, valor, motivo: motivo || null },
+    });
+    await enfileirar(tx, 'movimento_caixa', m.id, m);
+    return m;
+  });
+  res.status(201).json(mov);
+}));
+
+// Fecha o caixa e retorna o resumo (esperado x informado).
+router.post('/:id/fechar', asyncHandler(async (req, res) => {
+  const { valorFechamento, observacao } = z
+    .object({
+      valorFechamento: z.coerce.number().nonnegative(),
+      observacao: z.string().optional().nullable(),
+    })
+    .parse(req.body);
+
+  const caixa = await prisma.caixa.findUniqueOrThrow({
+    where: { id: req.params.id },
+    include: {
+      movimentos: true,
+      vendas: { include: { pagamentos: true } },
+    },
+  });
+
+  const dinheiroVendas = caixa.vendas
+    .filter((v) => v.status === 'FINALIZADA')
+    .flatMap((v) => v.pagamentos)
+    .filter((p) => p.forma === 'DINHEIRO')
+    .reduce((acc, p) => acc + Number(p.valor), 0);
+  const suprimentos = caixa.movimentos
+    .filter((m) => m.tipo === 'SUPRIMENTO')
+    .reduce((acc, m) => acc + Number(m.valor), 0);
+  const sangrias = caixa.movimentos
+    .filter((m) => m.tipo === 'SANGRIA')
+    .reduce((acc, m) => acc + Number(m.valor), 0);
+
+  const esperadoDinheiro = Number(caixa.valorAbertura) + dinheiroVendas + suprimentos - sangrias;
+
+  const atualizado = await prisma.$transaction(async (tx) => {
+    const c = await tx.caixa.update({
+      where: { id: caixa.id },
+      data: { aberto: false, fechamentoEm: new Date(), valorFechamento, observacao: observacao || null },
+    });
+    // Estado final do caixa sobe para a central (upsert por id).
+    await enfileirar(tx, 'caixa', c.id, c);
+    return c;
+  });
+
+  res.json({
+    caixa: atualizado,
+    resumo: {
+      valorAbertura: Number(caixa.valorAbertura),
+      dinheiroVendas,
+      suprimentos,
+      sangrias,
+      esperadoDinheiro,
+      informado: valorFechamento,
+      diferenca: valorFechamento - esperadoDinheiro,
+    },
+  });
+}));
+
+export default router;

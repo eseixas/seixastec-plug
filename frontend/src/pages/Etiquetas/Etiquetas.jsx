@@ -1,0 +1,283 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Search, Barcode, Printer, Trash2 } from 'lucide-react'
+import { api } from '../../lib/api.js'
+import { downloadBlob } from '../../lib/download.js'
+import { useToast } from '../../context/ToastContext.jsx'
+import {
+  Button,
+  Input,
+  Table,
+  Thead,
+  Th,
+  Tbody,
+  Td,
+  Tr,
+  Badge,
+  Card,
+  PageHeader,
+  EmptyState,
+  Spinner,
+} from '../../components/ui/index.js'
+
+export default function Etiquetas() {
+  const toast = useToast()
+
+  const [search, setSearch] = useState('')
+  const [q, setQ] = useState('')
+  const [produtoSelId, setProdutoSelId] = useState(null)
+  const [formato, setFormato] = useState('termica') // 'termica' | 'a4'
+  const [gerando, setGerando] = useState(false)
+
+  // Lista de impressão acumulada: variacaoId -> { variacaoId, produtoNome, cor, tamanho, quantidade }
+  const [lista, setLista] = useState({})
+
+  // Busca com debounce (mesmo padrão de ProdutosList).
+  useEffect(() => {
+    const t = setTimeout(() => setQ(search.trim()), 300)
+    return () => clearTimeout(t)
+  }, [search])
+
+  const { data: resultados, isFetching } = useQuery({
+    queryKey: ['etiquetas', 'produtos', q],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (q) params.set('q', q)
+      params.set('ativo', 'true')
+      params.set('limit', '10')
+      return api.get(`/produtos?${params.toString()}`)
+    },
+    enabled: q.length > 0,
+  })
+
+  const { data: produtoSel, isLoading: loadingProduto } = useQuery({
+    queryKey: ['etiquetas', 'produto', produtoSelId],
+    queryFn: () => api.get(`/produtos/${produtoSelId}`),
+    enabled: !!produtoSelId,
+  })
+
+  const produtos = resultados?.data ?? []
+
+  const variacoesAtivas = useMemo(
+    () => (produtoSel?.variacoes || []).filter((v) => v.ativo),
+    [produtoSel]
+  )
+
+  function setQuantidade(variacao, produtoNome, valor) {
+    const qtd = Math.max(0, Number(valor) || 0)
+    setLista((prev) => {
+      const next = { ...prev }
+      if (qtd <= 0) {
+        delete next[variacao.id]
+      } else {
+        next[variacao.id] = {
+          variacaoId: variacao.id,
+          produtoNome,
+          cor: variacao.cor,
+          tamanho: variacao.tamanho,
+          quantidade: qtd,
+        }
+      }
+      return next
+    })
+  }
+
+  function removerDaLista(variacaoId) {
+    setLista((prev) => {
+      const next = { ...prev }
+      delete next[variacaoId]
+      return next
+    })
+  }
+
+  const itensLista = Object.values(lista)
+  const totalEtiquetas = itensLista.reduce((s, i) => s + i.quantidade, 0)
+  const podeGerar = itensLista.length > 0
+
+  async function handleGerar() {
+    if (!podeGerar) return
+    setGerando(true)
+    try {
+      const payload = {
+        itens: itensLista.map((i) => ({ variacaoId: i.variacaoId, quantidade: i.quantidade })),
+        formato,
+      }
+      const blob = await api.postBlob('/etiquetas/pdf', payload)
+      downloadBlob(blob, 'etiquetas.pdf')
+      toast.success('PDF de etiquetas gerado.')
+    } catch (err) {
+      toast.error(err?.message || 'Erro ao gerar etiquetas.')
+    } finally {
+      setGerando(false)
+    }
+  }
+
+  return (
+    <div>
+      <PageHeader
+        title="Etiquetas"
+        subtitle="Gere etiquetas com código de barras para impressão"
+      />
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Coluna de busca + variações */}
+        <div className="space-y-4 lg:col-span-2">
+          <Card title="Buscar produto">
+            <div className="relative">
+              <Input
+                placeholder="Nome, referência..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9"
+              />
+              <Search size={16} className="pointer-events-none absolute left-3 top-[10px] text-gray-400" />
+            </div>
+
+            {q.length > 0 && (
+              <div className="mt-3 divide-y divide-gray-100 rounded-lg border border-gray-200">
+                {isFetching && produtos.length === 0 ? (
+                  <div className="px-3 py-3 text-sm text-gray-400">Buscando…</div>
+                ) : produtos.length === 0 ? (
+                  <div className="px-3 py-3 text-sm text-gray-400">Nenhum produto encontrado.</div>
+                ) : (
+                  produtos.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setProdutoSelId(p.id)}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50 ${
+                        produtoSelId === p.id ? 'bg-indigo-50' : ''
+                      }`}
+                    >
+                      <span className="font-medium text-gray-800">{p.nome}</span>
+                      <span className="text-xs text-gray-400">{p.referencia || ''}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </Card>
+
+          {produtoSelId && (
+            <Card title={produtoSel?.nome ? `Variações — ${produtoSel.nome}` : 'Variações'}>
+              {loadingProduto ? (
+                <Spinner />
+              ) : variacoesAtivas.length === 0 ? (
+                <p className="text-sm text-gray-400">Este produto não tem variações ativas.</p>
+              ) : (
+                <Table>
+                  <Thead>
+                    <Tr>
+                      <Th>Cor</Th>
+                      <Th>Tamanho</Th>
+                      <Th>Código de barras</Th>
+                      <Th className="text-right">Qtd. etiquetas</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {variacoesAtivas.map((v) => (
+                      <Tr key={v.id}>
+                        <Td>{v.cor}</Td>
+                        <Td>{v.tamanho}</Td>
+                        <Td>
+                          {v.codigoBarras ? (
+                            <span className="font-mono text-xs text-gray-700">{v.codigoBarras}</span>
+                          ) : (
+                            <Badge variant="amber">será gerado</Badge>
+                          )}
+                        </Td>
+                        <Td className="text-right">
+                          <Input
+                            type="number"
+                            min="0"
+                            value={lista[v.id]?.quantidade ?? 0}
+                            onChange={(e) => setQuantidade(v, produtoSel.nome, e.target.value)}
+                            className="w-20 text-right"
+                          />
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              )}
+            </Card>
+          )}
+
+          {!produtoSelId && (
+            <EmptyState
+              icon={Barcode}
+              title="Busque um produto para começar"
+              description="Selecione um produto e defina quantas etiquetas imprimir de cada variação."
+            />
+          )}
+        </div>
+
+        {/* Coluna da lista de impressão */}
+        <div className="space-y-4">
+          <Card title="Lista de impressão">
+            {itensLista.length === 0 ? (
+              <p className="text-sm text-gray-400">
+                Nenhuma etiqueta selecionada. Defina quantidades nas variações.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {itensLista.map((i) => (
+                  <li
+                    key={i.variacaoId}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-gray-100 px-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-gray-800">{i.produtoNome}</div>
+                      <div className="text-xs text-gray-500">
+                        {[i.cor, i.tamanho].filter(Boolean).join(' · ')} — {i.quantidade}x
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={Trash2}
+                      onClick={() => removerDaLista(i.variacaoId)}
+                      aria-label="Remover"
+                      className="text-red-600 hover:bg-red-50"
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <div className="mb-1 block text-sm font-medium text-gray-700">Formato</div>
+              <div className="inline-flex w-full rounded-lg border border-gray-300 p-0.5">
+                {[
+                  { value: 'termica', label: 'Térmica (rolo)' },
+                  { value: 'a4', label: 'Folha A4' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setFormato(opt.value)}
+                    className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                      formato === opt.value ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <Button
+              icon={Printer}
+              onClick={handleGerar}
+              disabled={!podeGerar}
+              loading={gerando}
+              className="mt-4 w-full justify-center"
+            >
+              Baixar PDF{totalEtiquetas > 0 ? ` (${totalEtiquetas})` : ''}
+            </Button>
+          </Card>
+        </div>
+      </div>
+    </div>
+  )
+}

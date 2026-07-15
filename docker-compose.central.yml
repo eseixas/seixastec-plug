@@ -1,0 +1,83 @@
+# SeixasTec — Gestão Total :: CENTRAL (VPS)
+# Papel: fonte de verdade do catálogo/config, servidor do admin e receptor do
+# sync dos edges. Rode isto na VPS. Os PDVs NÃO falam com este backend — eles
+# falam com o edge de cada loja (docker-compose.edge.yml).
+#
+#   docker compose -f docker-compose.central.yml up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: seixastec_central_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cpvarejo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cpvarejo}
+      POSTGRES_DB: ${POSTGRES_DB:-cpvarejo}
+    volumes:
+      - central_db_data:/var/lib/postgresql/data
+    ports:
+      - "${CENTRAL_DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cpvarejo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: seixastec_central_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ROLE: central
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cpvarejo}:${POSTGRES_PASSWORD:-cpvarejo}@db:5432/${POSTGRES_DB:-cpvarejo}
+      JWT_SECRET: ${JWT_SECRET:-troque-este-segredo}
+      PORT: 4000
+      NODE_ENV: ${NODE_ENV:-production}
+      UPLOAD_DIR: /app/uploads
+      # Token de sync da Matriz (semeado como EdgeNode). Use o mesmo no edge.
+      MATRIZ_EDGE_TOKEN: ${MATRIZ_EDGE_TOKEN:-edge-matriz-dev-token}
+    ports:
+      - "${CENTRAL_BACKEND_PORT:-4000}:4000"
+    volumes:
+      - central_uploads:/app/uploads
+
+  admin:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${CENTRAL_PUBLIC_URL:-http://localhost:4000}
+    container_name: seixastec_central_admin
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${ADMIN_PORT:-8080}:80"
+
+  backup:
+    build: ./backup
+    container_name: seixastec_central_backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-cpvarejo}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-cpvarejo}
+      PGDATABASE: ${POSTGRES_DB:-cpvarejo}
+      BACKUP_CRON: ${BACKUP_CRON:-0 3 * * *}
+      RCLONE_REMOTE: ${RCLONE_REMOTE:-cloud:cpvarejo-backups}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./backup/rclone.conf:/config/rclone/rclone.conf:ro
+      - central_backup:/backups
+      - central_uploads:/uploads:ro
+
+volumes:
+  central_db_data:
+  central_uploads:
+  central_backup:

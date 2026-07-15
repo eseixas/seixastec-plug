@@ -1,0 +1,899 @@
+// SeixasTec — Gestão Total
+// ERP para loja de varejo de roupas: produtos com grade (tamanho x cor), vendas,
+// PDV (app separado), estoque, adquirentes/recebíveis e fiscal (fase seguinte).
+// Modelado para multi-loja e múltiplos terminais de PDV desde já.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// Estrutura organizacional (multi-loja) — previsto para futuras localidades
+// ----------------------------------------------------------------------------
+model Loja {
+  id                  String   @id @default(uuid())
+  nome                String
+  cnpj                String?  @unique
+  ie                  String? // inscrição estadual (usado no fiscal)
+  cep                 String?
+  logradouro          String?
+  numero              String?
+  bairro              String?
+  cidade              String?
+  uf                  String?
+  matriz              Boolean  @default(false)
+  ativo               Boolean  @default(true)
+  // Fiscal (NFC-e/NF-e)
+  crt                 Int? // Código de Regime Tributário: 1=Simples Nacional, 2=Simples excesso sublimite, 3=Regime Normal
+  inscricaoMunicipal  String?
+  codigoMunicipioIbge String? // código IBGE de 7 dígitos do município (obrigatório no XML da NFC-e/NF-e)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  terminais             PDVTerminal[]
+  caixas                Caixa[]
+  vendas                Venda[]
+  movimentacoes         MovimentacaoEstoque[]
+  usuarios              User[]
+  estoques              EstoqueLocal[]
+  notasFiscais          NotaFiscal[]
+  transferenciasOrigem  TransferenciaEstoque[] @relation("TransfOrigem")
+  transferenciasDestino TransferenciaEstoque[] @relation("TransfDestino")
+  comprasItens          CompraItem[]
+}
+
+// Terminal físico/lógico de PDV. Permite múltiplos PDVs por loja.
+model PDVTerminal {
+  id            String   @id @default(uuid())
+  lojaId        String
+  nome          String // ex.: "Caixa 01"
+  identificador String?  @unique // código/serial do terminal
+  ativo         Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  loja   Loja    @relation(fields: [lojaId], references: [id])
+  caixas Caixa[]
+  vendas Venda[]
+}
+
+// ----------------------------------------------------------------------------
+// Autenticação e usuários
+// ----------------------------------------------------------------------------
+enum UserRole {
+  ADMIN
+  GERENTE
+  FINANCEIRO
+  CAIXA
+  VENDEDOR
+}
+
+model User {
+  id        String   @id @default(uuid())
+  nome      String
+  email     String   @unique
+  senhaHash String
+  role      UserRole @default(VENDEDOR)
+  lojaId    String?
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  loja                  Loja?                  @relation(fields: [lojaId], references: [id])
+  vendas                Venda[]
+  caixas                Caixa[]
+  movimentacoes         MovimentacaoEstoque[]
+  apiKeys               ApiKey[]
+  transferenciasEstoque TransferenciaEstoque[]
+  importacoesExtrato    ImportacaoExtrato[]
+}
+
+// Chave de API para acesso externo/integrações (além do login JWT).
+model ApiKey {
+  id        String    @id @default(uuid())
+  nome      String
+  prefixo   String // primeiros caracteres, para exibição
+  chaveHash String    @unique // sha256 da chave; o valor bruto só aparece na criação
+  usuarioId String? // usuário que a chave representa nas operações
+  ativo     Boolean   @default(true)
+  ultimoUso DateTime?
+  createdAt DateTime  @default(now())
+
+  usuario User? @relation(fields: [usuarioId], references: [id])
+}
+
+// ----------------------------------------------------------------------------
+// Catálogo de produtos (roupas com grade)
+// ----------------------------------------------------------------------------
+
+// Escala de tamanhos reutilizável (ex.: "PP-XG", "36-46", "Único").
+// Os tamanhos são uma lista ordenada. A escala do produto não muda após criação.
+model EscalaTamanho {
+  id        String   @id @default(uuid())
+  nome      String   @unique
+  tamanhos  String[] // ordem preservada, ex.: ["PP","P","M","G","GG","XG"]
+  ordem     Int      @default(0)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  produtos Produto[]
+}
+
+// Paleta de cores gerenciável (com amostra hex).
+model Cor {
+  id        String   @id @default(uuid())
+  nome      String   @unique
+  hex       String // ex.: "#2563eb"
+  ordem     Int      @default(0)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Valores fiscais padrão (linha única), usados para pré-preencher novos produtos.
+model ConfiguracaoFiscal {
+  id               String   @id @default("singleton")
+  origemMercadoria String   @default("0") // 0 — Nacional...
+  csosn            String   @default("102")
+  cfop             String   @default("5102")
+  ncmPadrao        String?
+  cest             String?
+  // Emissão de NFC-e/NF-e
+  ambiente         String   @default("homologacao") // "homologacao" | "producao"
+  serieNfce        Int      @default(1)
+  serieNfe         Int      @default(1)
+  idCsc            String? // identificador do CSC fornecido pela SEFAZ (o CSC em si não fica aqui)
+  updatedAt        DateTime @updatedAt
+}
+
+model Categoria {
+  id        String   @id @default(uuid())
+  nome      String   @unique
+  descricao String?
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  produtos Produto[]
+}
+
+model Marca {
+  id        String   @id @default(uuid())
+  nome      String   @unique
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  produtos Produto[]
+}
+
+// Produto "pai" — ex.: Camiseta Básica Gola Redonda
+model Produto {
+  id                 String   @id @default(uuid())
+  referencia         String?  @unique // código interno, ex.: "VG-001"
+  nome               String
+  descricao          String?
+  categoriaId        String?
+  marcaId            String?
+  fornecedorPadraoId String?
+  escalaId           String? // escala de tamanhos (imutável após criação)
+  genero             String? // Masculino, Feminino, Unissex, Infantil
+  fotoUrl            String? // caminho da imagem servida pelo backend (/uploads/...)
+  colecao            String? // ex.: "Alto Verão", "Casual"
+  estacao            String? // ex.: "Verão 2026", "Inverno 2026"
+  // Dados fiscais
+  ncm                String?
+  cest               String?
+  origemMercadoria   String? // 0..8
+  csosn              String? // ex.: 102
+  cfop               String? // ex.: 5102
+  precoCusto         Decimal  @default(0) @db.Decimal(12, 2)
+  precoVenda         Decimal  @default(0) @db.Decimal(12, 2)
+  ativo              Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  categoria        Categoria?     @relation(fields: [categoriaId], references: [id])
+  marca            Marca?         @relation(fields: [marcaId], references: [id])
+  fornecedorPadrao Fornecedor?    @relation("FornecedorPadrao", fields: [fornecedorPadraoId], references: [id])
+  escala           EscalaTamanho? @relation(fields: [escalaId], references: [id])
+  variacoes        Variacao[]
+
+  @@index([nome])
+}
+
+// Variação = SKU concreto: um tamanho + uma cor de um produto.
+model Variacao {
+  id            String   @id @default(uuid())
+  produtoId     String
+  tamanho       String // PP, P, M, G, GG, XG, 36, 38, 40...
+  cor           String
+  sku           String   @unique
+  codigoBarras  String?  @unique
+  precoVenda    Decimal? @db.Decimal(12, 2) // override opcional do preço do produto
+  // ATENÇÃO: o saldo real de estoque agora vive em EstoqueLocal (por loja).
+  // Estes campos permanecem apenas como agregado/legado; na central o total é
+  // SUM(EstoqueLocal) por variação. Não usar como fonte de verdade.
+  estoqueAtual  Int      @default(0)
+  estoqueMinimo Int      @default(0)
+  ativo         Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  produto       Produto               @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  itensVenda    VendaItem[]
+  movimentacoes MovimentacaoEstoque[]
+  estoques      EstoqueLocal[]
+  comprasItens  CompraItem[]
+
+  @@unique([produtoId, tamanho, cor])
+  @@index([codigoBarras])
+}
+
+// Saldo de estoque POR LOJA. Cada loja (edge) é dona autoritativa das suas linhas;
+// a central consolida somando todas as lojas. O saldo é mantido aplicando
+// MovimentacaoEstoque (event log) idempotentemente dos dois lados.
+model EstoqueLocal {
+  id            String   @id @default(uuid())
+  lojaId        String
+  variacaoId    String
+  estoqueAtual  Int      @default(0)
+  estoqueMinimo Int      @default(0)
+  updatedAt     DateTime @updatedAt
+
+  loja     Loja     @relation(fields: [lojaId], references: [id])
+  variacao Variacao @relation(fields: [variacaoId], references: [id], onDelete: Cascade)
+
+  @@unique([lojaId, variacaoId])
+  @@index([variacaoId])
+}
+
+// ----------------------------------------------------------------------------
+// Pessoas
+// ----------------------------------------------------------------------------
+model Cliente {
+  id            String   @id @default(uuid())
+  nome          String
+  cpfCnpj       String?  @unique
+  email         String?
+  telefone      String?
+  cep           String?
+  logradouro    String?
+  numero        String?
+  complemento   String?
+  bairro        String?
+  cidade        String?
+  uf            String?
+  limiteCredito Decimal  @default(0) @db.Decimal(12, 2)
+  observacao    String?
+  ativo         Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  vendas     Venda[]
+  recebiveis Recebivel[]
+
+  @@index([nome])
+}
+
+model Fornecedor {
+  id         String   @id @default(uuid())
+  nome       String
+  cpfCnpj    String?  @unique
+  email      String?
+  telefone   String?
+  cidade     String?
+  uf         String?
+  observacao String?
+  ativo      Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  movimentacoes  MovimentacaoEstoque[]
+  produtosPadrao Produto[]             @relation("FornecedorPadrao")
+  contasPagar    ContaPagar[]
+  compras        Compra[]
+
+  @@index([nome])
+}
+
+// ----------------------------------------------------------------------------
+// Estoque
+// ----------------------------------------------------------------------------
+enum TipoMovimentacao {
+  ENTRADA
+  SAIDA
+  AJUSTE
+}
+
+// Motivo padronizado da movimentação — cobre entrada e saída (o formulário
+// filtra as opções relevantes pelo `tipo` escolhido). `motivo` (free-text)
+// continua existindo como observação opcional complementar.
+enum MotivoMovimentacao {
+  AJUSTE
+  DEVOLUCAO
+  COMPRA
+  ESTOQUE_INICIAL
+  PRODUCAO
+  CONSUMO_INTERNO
+  PERDA
+  REPOSICAO
+  VENDA
+  TRANSFERENCIA
+  OUTRO
+}
+
+model MovimentacaoEstoque {
+  id              String              @id @default(uuid())
+  variacaoId      String
+  lojaId          String?
+  tipo            TipoMovimentacao
+  quantidade      Int
+  custoUnit       Decimal?            @db.Decimal(12, 2)
+  motivo          String?
+  categoria       MotivoMovimentacao?
+  transferenciaId String?
+  fornecedorId    String?
+  vendaId         String?
+  usuarioId       String?
+  createdAt       DateTime            @default(now())
+
+  variacao      Variacao              @relation(fields: [variacaoId], references: [id])
+  loja          Loja?                 @relation(fields: [lojaId], references: [id])
+  fornecedor    Fornecedor?           @relation(fields: [fornecedorId], references: [id])
+  venda         Venda?                @relation(fields: [vendaId], references: [id])
+  usuario       User?                 @relation(fields: [usuarioId], references: [id])
+  transferencia TransferenciaEstoque? @relation(fields: [transferenciaId], references: [id])
+  compraItem    CompraItem?
+
+  @@index([variacaoId])
+  @@index([createdAt])
+  @@index([transferenciaId])
+}
+
+// Cabeçalho de transferência de estoque entre lojas — só existe na central,
+// não precisa sincronizar ele mesmo, só as MovimentacaoEstoque que gera
+// (uma SAIDA na origem + uma ENTRADA no destino, ligadas por transferenciaId).
+model TransferenciaEstoque {
+  id            String   @id @default(uuid())
+  lojaOrigemId  String
+  lojaDestinoId String
+  usuarioId     String?
+  observacao    String?
+  createdAt     DateTime @default(now())
+
+  lojaOrigem    Loja                  @relation("TransfOrigem", fields: [lojaOrigemId], references: [id])
+  lojaDestino   Loja                  @relation("TransfDestino", fields: [lojaDestinoId], references: [id])
+  usuario       User?                 @relation(fields: [usuarioId], references: [id])
+  movimentacoes MovimentacaoEstoque[]
+}
+
+// ----------------------------------------------------------------------------
+// Adquirentes, taxas e recebíveis (meios de pagamento com custo e prazo)
+// ----------------------------------------------------------------------------
+enum FormaPagamento {
+  DINHEIRO
+  PIX
+  DEBITO
+  CREDITO
+  DEPOSITO // depósito/transferência em conta
+  LINK // link de pagamento
+}
+
+// Operadora/adquirente (ex.: Cielo, Rede, Stone, Mercado Pago).
+model Adquirente {
+  id        String   @id @default(uuid())
+  nome      String
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  taxas      TaxaAdquirente[]
+  pagamentos Pagamento[]
+  recebiveis Recebivel[]
+}
+
+// Regra de taxa/prazo por adquirente + forma + nº de parcelas.
+// Para crédito, cada faixa de parcelas tem sua própria taxa.
+model TaxaAdquirente {
+  id                   String         @id @default(uuid())
+  adquirenteId         String
+  forma                FormaPagamento
+  parcelas             Int            @default(1)
+  taxaPercentual       Decimal        @db.Decimal(6, 3) // % sobre o valor bruto
+  taxaFixa             Decimal        @default(0) @db.Decimal(12, 2)
+  prazoRecebimentoDias Int            @default(0) // dias até o crédito da 1ª parcela
+  ativo                Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  adquirente Adquirente @relation(fields: [adquirenteId], references: [id], onDelete: Cascade)
+
+  @@unique([adquirenteId, forma, parcelas])
+}
+
+enum StatusRecebivel {
+  PENDENTE
+  RECEBIDO
+  CANCELADO
+}
+
+// Parcela a receber gerada por um pagamento (para o financeiro/conciliação).
+// pagamentoId/vendaId são opcionais para permitir recebíveis manuais (ex.: aluguel
+// recebido, reembolso) lançados direto no financeiro, sem venda associada.
+model Recebivel {
+  id              String          @id @default(uuid())
+  pagamentoId     String?
+  vendaId         String?
+  adquirenteId    String?
+  categoriaId     String?
+  descricao       String?
+  clienteId       String?
+  contaBancariaId String?
+  parcelaNumero   Int             @default(1)
+  totalParcelas   Int             @default(1)
+  valorBruto      Decimal         @db.Decimal(12, 2)
+  taxaValor       Decimal         @default(0) @db.Decimal(12, 2)
+  valorLiquido    Decimal         @db.Decimal(12, 2)
+  dataPrevista    DateTime
+  status          StatusRecebivel @default(PENDENTE)
+  recebidoEm      DateTime?
+  // Conciliação bancária
+  conciliado         Boolean             @default(false)
+  dataConciliacao    DateTime?
+  origemConciliacao  OrigemConciliacao?
+  createdAt       DateTime        @default(now())
+
+  pagamento     Pagamento?           @relation(fields: [pagamentoId], references: [id], onDelete: Cascade)
+  venda         Venda?               @relation(fields: [vendaId], references: [id])
+  adquirente    Adquirente?          @relation(fields: [adquirenteId], references: [id])
+  categoria     CategoriaFinanceira? @relation(fields: [categoriaId], references: [id])
+  cliente       Cliente?             @relation(fields: [clienteId], references: [id])
+  contaBancaria ContaBancaria?       @relation(fields: [contaBancariaId], references: [id])
+  lancamentosExtrato LancamentoExtrato[]
+
+  @@index([status])
+  @@index([dataPrevista])
+  @@index([conciliado])
+}
+
+// ----------------------------------------------------------------------------
+// Financeiro — Contas Bancárias, Plano de Contas (DRE), Contas a Pagar
+// ----------------------------------------------------------------------------
+enum TipoContaBancaria {
+  DINHEIRO
+  CONTA_CORRENTE
+  CONTA_POUPANCA
+  CARTEIRA_DIGITAL
+}
+
+// Conta bancária/caixa da loja. `saldo` é campo armazenado, mantido via
+// increment/decrement atômico dentro da mesma transação que marca um
+// pagamento/recebimento (sem log de eventos — módulo 100% central, escritor
+// único; auditoria é reconstruída a partir de ContaPagar/Recebivel).
+model ContaBancaria {
+  id           String            @id @default(uuid())
+  nome         String
+  tipo         TipoContaBancaria @default(CONTA_CORRENTE)
+  banco        String?
+  agencia      String?
+  numeroConta  String?
+  saldoInicial Decimal           @default(0) @db.Decimal(12, 2)
+  saldo        Decimal           @default(0) @db.Decimal(12, 2)
+  ativo        Boolean           @default(true)
+  // Conta que recebe crédito automático das vendas em dinheiro (só uma pode ser true por vez).
+  principal    Boolean           @default(false)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  contasPagar         ContaPagar[]
+  recebiveis          Recebivel[]
+  importacoesExtrato  ImportacaoExtrato[]
+  transferenciasSaida  TransferenciaContas[] @relation("TransferenciaOrigem")
+  transferenciasEntrada TransferenciaContas[] @relation("TransferenciaDestino")
+
+  @@index([nome])
+}
+
+// Transferência manual de saldo entre duas contas bancárias/caixas.
+model TransferenciaContas {
+  id              String   @id @default(uuid())
+  contaOrigemId   String
+  contaDestinoId  String
+  valor           Decimal  @db.Decimal(12, 2)
+  data            DateTime @default(now())
+  descricao       String?
+  createdAt       DateTime @default(now())
+
+  contaOrigem  ContaBancaria @relation("TransferenciaOrigem", fields: [contaOrigemId], references: [id])
+  contaDestino ContaBancaria @relation("TransferenciaDestino", fields: [contaDestinoId], references: [id])
+
+  @@index([contaOrigemId])
+  @@index([contaDestinoId])
+}
+
+enum GrupoDRE {
+  RECEITA_OPERACIONAL
+  DEDUCAO_RECEITA
+  CUSTO_OPERACIONAL
+  DESPESA_OPERACIONAL
+  DESPESA_FINANCEIRA
+  OUTRAS_RECEITAS
+  OUTRAS_DESPESAS
+}
+
+enum TipoCategoriaFinanceira {
+  RECEITA
+  DESPESA
+}
+
+// Plano de contas achatado (sem árvore de subcontas — v1 não precisa). `tipo`
+// é definido pelas rotas do backend a partir do `grupo`, nunca aceito direto
+// do payload do cliente.
+model CategoriaFinanceira {
+  id        String                  @id @default(uuid())
+  nome      String
+  grupo     GrupoDRE
+  tipo      TipoCategoriaFinanceira
+  ativo     Boolean                 @default(true)
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  contasPagar ContaPagar[]
+  recebiveis  Recebivel[]
+
+  @@unique([nome, grupo])
+}
+
+// Conta a pagar (v1 essencial: sem recorrência, sem centro de custo).
+model ContaPagar {
+  id              String    @id @default(uuid())
+  descricao       String
+  categoriaId     String
+  fornecedorId    String?
+  contaBancariaId String?
+  compraId        String?
+  valor           Decimal   @db.Decimal(12, 2)
+  desconto        Decimal   @default(0) @db.Decimal(12, 2)
+  juros           Decimal   @default(0) @db.Decimal(12, 2)
+  valorPago       Decimal?  @db.Decimal(12, 2)
+  vencimento      DateTime
+  dataPagamento   DateTime?
+  pago            Boolean   @default(false)
+  observacoes     String?
+  anexoUrl        String?
+  // Conciliação bancária
+  conciliado        Boolean            @default(false)
+  dataConciliacao   DateTime?
+  origemConciliacao OrigemConciliacao?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  categoria     CategoriaFinanceira @relation(fields: [categoriaId], references: [id])
+  fornecedor    Fornecedor?         @relation(fields: [fornecedorId], references: [id])
+  contaBancaria ContaBancaria?      @relation(fields: [contaBancariaId], references: [id])
+  compra        Compra?             @relation(fields: [compraId], references: [id])
+  lancamentosExtrato LancamentoExtrato[]
+
+  @@index([vencimento])
+  @@index([pago])
+  @@index([compraId])
+  @@index([conciliado])
+}
+
+// ----------------------------------------------------------------------------
+// Compra — entrada de estoque com cabeçalho, status por item e ligação com o
+// financeiro (Contas a Pagar). Central-only, mesmo padrão de Fornecedor.
+// ----------------------------------------------------------------------------
+enum StatusCompraItem {
+  AGUARDANDO
+  ENTREGUE
+  CANCELADO
+  EXTRAVIADO
+}
+
+// Sem campo `status` armazenado — é derivado dos status dos itens na leitura.
+model Compra {
+  id           String   @id @default(uuid())
+  fornecedorId String
+  numero       Int // gerado via max+1 em transação (mesmo padrão de Venda.numero, aqui global)
+  numeroNota   String?
+  serie        String?
+  dataCompra   DateTime
+  observacoes  String?
+  anexoUrl     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  fornecedor  Fornecedor   @relation(fields: [fornecedorId], references: [id])
+  itens       CompraItem[]
+  contasPagar ContaPagar[]
+}
+
+model CompraItem {
+  id              String           @id @default(uuid())
+  compraId        String
+  variacaoId      String
+  lojaId          String
+  quantidade      Int
+  custoUnitario   Decimal          @db.Decimal(12, 2)
+  valorVenda      Decimal?         @db.Decimal(12, 2)
+  status          StatusCompraItem @default(AGUARDANDO)
+  previsaoChegada DateTime?
+  movimentacaoId  String?          @unique
+
+  compra       Compra               @relation(fields: [compraId], references: [id], onDelete: Cascade)
+  variacao     Variacao             @relation(fields: [variacaoId], references: [id])
+  loja         Loja                 @relation(fields: [lojaId], references: [id])
+  movimentacao MovimentacaoEstoque? @relation(fields: [movimentacaoId], references: [id])
+
+  @@index([compraId])
+}
+
+// ----------------------------------------------------------------------------
+// Vendas / PDV
+// ----------------------------------------------------------------------------
+enum StatusVenda {
+  ABERTA
+  FINALIZADA
+  CANCELADA
+}
+
+model Venda {
+  id            String      @id @default(uuid())
+  // Numeração POR LOJA (gerada localmente no edge). Não usa autoincrement global
+  // porque cada loja opera offline com seu próprio banco — sequências independentes
+  // por loja evitam colisão ao sincronizar com a central.
+  numero        Int
+  clienteId     String?
+  usuarioId     String
+  caixaId       String?
+  lojaId        String?
+  pdvTerminalId String?
+  status        StatusVenda @default(ABERTA)
+  subtotal      Decimal     @default(0) @db.Decimal(12, 2)
+  desconto      Decimal     @default(0) @db.Decimal(12, 2)
+  acrescimo     Decimal     @default(0) @db.Decimal(12, 2)
+  total         Decimal     @default(0) @db.Decimal(12, 2)
+  observacao    String?
+  createdAt     DateTime    @default(now())
+  finalizadaEm  DateTime?
+
+  cliente       Cliente?              @relation(fields: [clienteId], references: [id])
+  usuario       User                  @relation(fields: [usuarioId], references: [id])
+  caixa         Caixa?                @relation(fields: [caixaId], references: [id])
+  loja          Loja?                 @relation(fields: [lojaId], references: [id])
+  pdvTerminal   PDVTerminal?          @relation(fields: [pdvTerminalId], references: [id])
+  itens         VendaItem[]
+  pagamentos    Pagamento[]
+  recebiveis    Recebivel[]
+  movimentacoes MovimentacaoEstoque[]
+  notasFiscais  NotaFiscal[]
+
+  @@unique([lojaId, numero])
+  @@index([createdAt])
+  @@index([status])
+}
+
+model VendaItem {
+  id         String  @id @default(uuid())
+  vendaId    String
+  variacaoId String
+  quantidade Int
+  precoUnit  Decimal @db.Decimal(12, 2)
+  desconto   Decimal @default(0) @db.Decimal(12, 2)
+  total      Decimal @db.Decimal(12, 2)
+
+  venda    Venda    @relation(fields: [vendaId], references: [id], onDelete: Cascade)
+  variacao Variacao @relation(fields: [variacaoId], references: [id])
+}
+
+model Pagamento {
+  id                   String         @id @default(uuid())
+  vendaId              String
+  forma                FormaPagamento
+  adquirenteId         String?
+  valor                Decimal        @db.Decimal(12, 2) // valor bruto
+  parcelas             Int            @default(1)
+  taxaPercentual       Decimal        @default(0) @db.Decimal(6, 3)
+  taxaValor            Decimal        @default(0) @db.Decimal(12, 2)
+  valorLiquido         Decimal        @default(0) @db.Decimal(12, 2)
+  prazoRecebimentoDias Int            @default(0)
+  createdAt            DateTime       @default(now())
+
+  venda      Venda       @relation(fields: [vendaId], references: [id], onDelete: Cascade)
+  adquirente Adquirente? @relation(fields: [adquirenteId], references: [id])
+  recebiveis Recebivel[]
+}
+
+// Sessão de caixa do PDV
+model Caixa {
+  id              String    @id @default(uuid())
+  usuarioId       String
+  lojaId          String?
+  pdvTerminalId   String?
+  aberturaEm      DateTime  @default(now())
+  fechamentoEm    DateTime?
+  valorAbertura   Decimal   @default(0) @db.Decimal(12, 2)
+  valorFechamento Decimal?  @db.Decimal(12, 2)
+  observacao      String?
+  aberto          Boolean   @default(true)
+
+  usuario     User             @relation(fields: [usuarioId], references: [id])
+  loja        Loja?            @relation(fields: [lojaId], references: [id])
+  pdvTerminal PDVTerminal?     @relation(fields: [pdvTerminalId], references: [id])
+  vendas      Venda[]
+  movimentos  MovimentoCaixa[]
+}
+
+enum TipoMovimentoCaixa {
+  SUPRIMENTO
+  SANGRIA
+}
+
+model MovimentoCaixa {
+  id        String             @id @default(uuid())
+  caixaId   String
+  tipo      TipoMovimentoCaixa
+  valor     Decimal            @db.Decimal(12, 2)
+  motivo    String?
+  createdAt DateTime           @default(now())
+
+  caixa Caixa @relation(fields: [caixaId], references: [id], onDelete: Cascade)
+}
+
+// ----------------------------------------------------------------------------
+// Sincronização distribuída (Central VPS <-> Edge por loja)
+// ----------------------------------------------------------------------------
+
+// Fila de saída (outbox) usada SOMENTE no edge. Toda escrita local que precisa
+// subir para a central (venda, movimento de estoque, caixa...) grava um evento
+// aqui na MESMA transação. O worker envia em lotes e marca syncedAt. Reenvio é
+// idempotente na central (upsert por UUID da entidade).
+model OutboxEvent {
+  id         String    @id @default(uuid())
+  tipo       String // "venda", "movimento_estoque", "caixa", "movimento_caixa"
+  entidadeId String // UUID da entidade de negócio (para idempotência)
+  payload    Json
+  createdAt  DateTime  @default(now())
+  syncedAt   DateTime?
+  tentativas Int       @default(0)
+
+  @@index([syncedAt])
+  @@index([createdAt])
+}
+
+// Marca d'água (high-water mark) de pull por entidade, usada no edge. Guarda o
+// maior updatedAt já aplicado de cada entidade de catálogo/config, para pedir só
+// o que mudou desde então.
+model SyncCursor {
+  entidade  String   @id // "produto", "variacao", "cliente", ...
+  cursor    String // ISO do maior updatedAt aplicado
+  updatedAt DateTime @updatedAt
+}
+
+// Registro de cada loja/edge na CENTRAL. Autentica o edge (x-edge-token validado
+// contra tokenHash) e guarda status de sincronização para exibir no admin.
+model EdgeNode {
+  id         String    @id // = lojaId
+  nome       String
+  tokenHash  String    @unique // sha256 do token de sync do edge
+  versao     String?
+  ultimoPush DateTime?
+  ultimoPull DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+// ----------------------------------------------------------------------------
+// Fiscal — NFC-e (modelo 65) e NF-e (modelo 55), emitidas direto na SEFAZ.
+// Roda SOMENTE no edge (é lá que a venda acontece). Numeração por
+// (lojaId, modelo, serie), mesmo padrão de Venda.numero (max+1 local).
+// ----------------------------------------------------------------------------
+enum StatusNotaFiscal {
+  PENDENTE
+  ENVIADA
+  AUTORIZADA
+  REJEITADA
+  CANCELADA
+  INUTILIZADA
+  ERRO
+}
+
+model NotaFiscal {
+  id             String           @id @default(uuid())
+  modelo         String // "65" = NFC-e, "55" = NF-e
+  serie          Int
+  numero         Int
+  lojaId         String
+  vendaId        String? // presente para NFC-e originada de venda do PDV
+  dadosManual    Json? // NF-e (55) lançada manualmente: {destinatario, itens, naturezaOperacao} — sem Venda associada
+  ambiente       String // "homologacao" | "producao"
+  status         StatusNotaFiscal @default(PENDENTE)
+  chaveAcesso    String?          @unique // 44 dígitos
+  protocolo      String?
+  xmlAssinado    String?          @db.Text
+  xmlRetorno     String?          @db.Text
+  motivoRejeicao String?
+  qrCodeUrl      String?          @db.Text
+  tentativas     Int              @default(0)
+  createdAt      DateTime         @default(now())
+  autorizadaEm   DateTime?
+  canceladaEm    DateTime?
+
+  loja  Loja   @relation(fields: [lojaId], references: [id])
+  venda Venda? @relation(fields: [vendaId], references: [id])
+
+  @@unique([lojaId, modelo, serie, numero])
+  @@index([status])
+  @@index([vendaId])
+}
+
+// ----------------------------------------------------------------------------
+// Conciliação bancária — importação de extrato (OFX/CSV) e pareamento com
+// Recebivel/ContaPagar. Módulo informativo: não altera saldo de ContaBancaria.
+// ----------------------------------------------------------------------------
+
+// Origem da conciliação de um Recebivel/ContaPagar.
+enum OrigemConciliacao {
+  MANUAL // conciliado à mão pelo usuário (sem extrato)
+  IMPORTADA // conciliado automaticamente a partir de um extrato importado
+}
+
+enum FormatoExtrato {
+  OFX
+  CSV
+}
+
+enum StatusLancamentoExtrato {
+  PENDENTE // sem contrapartida vinculada ainda
+  CONCILIADO // vinculado a um Recebivel ou ContaPagar
+  IGNORADO // sem contrapartida no sistema (ex.: tarifa bancária)
+}
+
+// Cabeçalho de uma importação de extrato bancário.
+model ImportacaoExtrato {
+  id              String         @id @default(uuid())
+  contaBancariaId String
+  formato         FormatoExtrato
+  nomeArquivo     String
+  usuarioId       String?
+  totalLinhas     Int            @default(0)
+  createdAt       DateTime       @default(now())
+
+  contaBancaria ContaBancaria       @relation(fields: [contaBancariaId], references: [id])
+  usuario       User?               @relation(fields: [usuarioId], references: [id])
+  lancamentos   LancamentoExtrato[]
+
+  @@index([contaBancariaId])
+  @@index([createdAt])
+}
+
+// Linha individual de um extrato importado (uma transação bancária).
+// `valor`: positivo = entrada (crédito), negativo = saída (débito).
+model LancamentoExtrato {
+  id            String                  @id @default(uuid())
+  importacaoId  String
+  data          DateTime
+  valor         Decimal                 @db.Decimal(12, 2)
+  descricao     String?
+  fitId         String? // identificador único da transação no OFX (FITID)
+  recebivelId   String?
+  contaPagarId  String?
+  status        StatusLancamentoExtrato @default(PENDENTE)
+  createdAt     DateTime                @default(now())
+
+  importacao ImportacaoExtrato @relation(fields: [importacaoId], references: [id], onDelete: Cascade)
+  recebivel  Recebivel?        @relation(fields: [recebivelId], references: [id])
+  contaPagar ContaPagar?       @relation(fields: [contaPagarId], references: [id])
+
+  @@index([importacaoId])
+  @@index([status])
+}
