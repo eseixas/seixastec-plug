@@ -33,6 +33,7 @@ const ENTIDADES_PULL = [
   // grupoTributacao ANTES de produto: produto referencia o grupo.
   { nome: 'grupoTributacao', delegate: 'grupoTributacao', cursor: 'updatedAt' },
   { nome: 'produto', delegate: 'produto', cursor: 'updatedAt' },
+  { nome: 'produtoFoto', delegate: 'produtoFoto', cursor: 'updatedAt' },
   { nome: 'variacao', delegate: 'variacao', cursor: 'updatedAt' },
   { nome: 'cliente', delegate: 'cliente', cursor: 'updatedAt' },
 ];

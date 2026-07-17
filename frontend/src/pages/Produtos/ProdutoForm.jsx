@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ImageIcon, Copy, Barcode, Pencil } from 'lucide-react'
-import { api, uploadFoto, fotoSrc } from '../../lib/api.js'
+import { ImageIcon, Copy, Barcode, Pencil, X } from 'lucide-react'
+import { api, uploadFoto, deleteFoto, reordenarFotos, fotoSrc } from '../../lib/api.js'
 import { useToast } from '../../context/ToastContext.jsx'
 import { Button, Input, Select, Card, Spinner, Table, Thead, Th, Tbody, Td, Tr } from '../../components/ui/index.js'
 
@@ -73,9 +73,13 @@ export default function ProdutoForm() {
   const [coresSelecionadas, setCoresSelecionadas] = useState(new Set())
   const [gradeCores, setGradeCores] = useState({})
   const [saving, setSaving] = useState(false)
-  const [fotoFile, setFotoFile] = useState(null)
-  const [fotoPreviewUrl, setFotoPreviewUrl] = useState(null)
-  const [removendoFoto, setRemovendoFoto] = useState(false)
+  // Edição: espelha produto.fotos (id, url, ordem), atualizado otimisticamente.
+  const [fotosProduto, setFotosProduto] = useState([])
+  // Criação: fila de arquivos ainda não enviados (produto ainda não existe).
+  const [fotosNovas, setFotosNovas] = useState([]) // { file, previewUrl }
+  const [enviandoFoto, setEnviandoFoto] = useState(false)
+  const [removendoFotoId, setRemovendoFotoId] = useState(null)
+  const [dragIndex, setDragIndex] = useState(null)
   const [fiscalPreenchidoAuto, setFiscalPreenchidoAuto] = useState(false)
   const [gerandoIds, setGerandoIds] = useState(new Set())
   const [editandoBarcodeId, setEditandoBarcodeId] = useState(null)
@@ -167,6 +171,7 @@ export default function ProdutoForm() {
         grade[cor] = { tamanhosSelecionados, precoVenda }
       }
       setGradeCores(grade)
+      setFotosProduto([...(produto.fotos || [])].sort((a, b) => a.ordem - b.ordem))
     }
   }, [produto])
 
@@ -189,15 +194,13 @@ export default function ProdutoForm() {
     }
   }, [isEdit, configFiscal, fiscalPreenchidoAuto])
 
+  // Revoga as URLs de preview (create mode) quando o componente desmonta.
   useEffect(() => {
-    if (!fotoFile) {
-      setFotoPreviewUrl(null)
-      return
+    return () => {
+      fotosNovas.forEach((f) => URL.revokeObjectURL(f.previewUrl))
     }
-    const url = URL.createObjectURL(fotoFile)
-    setFotoPreviewUrl(url)
-    return () => URL.revokeObjectURL(url)
-  }, [fotoFile])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function handleChange(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }))
@@ -238,38 +241,115 @@ export default function ProdutoForm() {
     })
   }
 
-  function handleFotoChange(e) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-
+  function validarArquivoFoto(file) {
     if (!file.type.startsWith('image/')) {
       toast.error('Arquivo deve ser uma imagem.')
-      return
+      return false
     }
     if (file.size > 5 * 1024 * 1024) {
       toast.error('Arquivo deve ter no máximo 5MB.')
-      return
+      return false
     }
-    setFotoFile(file)
+    return true
   }
 
-  async function handleRemoverFoto() {
-    if (!isEdit) return
-    const confirmado = window.confirm('Remover a foto deste produto?')
+  async function handleFotoChange(e) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (!files.length) return
+
+    const validos = files.filter(validarArquivoFoto)
+    if (!validos.length) return
+
+    if (!isEdit) {
+      // Produto ainda não existe: enfileira com preview local; sobe tudo no submit.
+      const novas = validos.map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))
+      setFotosNovas((prev) => [...prev, ...novas])
+      return
+    }
+
+    // Edição: sobe cada arquivo em sequência, atualizando a lista a cada uma.
+    setEnviandoFoto(true)
+    try {
+      for (const file of validos) {
+        const foto = await uploadFoto(id, file)
+        setFotosProduto((prev) => [...prev, foto])
+      }
+      toast.success('Foto(s) enviada(s) com sucesso.')
+      queryClient.invalidateQueries({ queryKey: ['produtos'] })
+      queryClient.invalidateQueries({ queryKey: ['produtos', id] })
+    } catch (err) {
+      toast.error(err?.message || 'Erro ao enviar foto.')
+    } finally {
+      setEnviandoFoto(false)
+    }
+  }
+
+  function handleRemoverFotoNova(index) {
+    setFotosNovas((prev) => {
+      const alvo = prev[index]
+      if (alvo) URL.revokeObjectURL(alvo.previewUrl)
+      return prev.filter((_, i) => i !== index)
+    })
+  }
+
+  async function handleRemoverFoto(fotoId) {
+    const confirmado = window.confirm('Remover esta foto do produto?')
     if (!confirmado) return
 
-    setRemovendoFoto(true)
+    setRemovendoFotoId(fotoId)
     try {
-      await api.delete(`/produtos/${id}/foto`)
+      await deleteFoto(id, fotoId)
+      setFotosProduto((prev) => prev.filter((f) => f.id !== fotoId))
       toast.success('Foto removida com sucesso.')
-      setFotoFile(null)
       queryClient.invalidateQueries({ queryKey: ['produtos'] })
       queryClient.invalidateQueries({ queryKey: ['produtos', id] })
     } catch (err) {
       toast.error(err?.message || 'Erro ao remover foto.')
     } finally {
-      setRemovendoFoto(false)
+      setRemovendoFotoId(null)
+    }
+  }
+
+  function handleDragStartFoto(index) {
+    setDragIndex(index)
+  }
+
+  function handleDragOverFoto(e) {
+    e.preventDefault()
+  }
+
+  async function handleDropFoto(targetIndex) {
+    if (dragIndex === null || dragIndex === targetIndex) {
+      setDragIndex(null)
+      return
+    }
+
+    if (!isEdit) {
+      // Reordena a fila local (sem chamada ao backend, produto ainda não existe).
+      setFotosNovas((prev) => {
+        const next = [...prev]
+        const [movida] = next.splice(dragIndex, 1)
+        next.splice(targetIndex, 0, movida)
+        return next
+      })
+      setDragIndex(null)
+      return
+    }
+
+    const anterior = fotosProduto
+    const reordenadas = [...fotosProduto]
+    const [movida] = reordenadas.splice(dragIndex, 1)
+    reordenadas.splice(targetIndex, 0, movida)
+    setFotosProduto(reordenadas)
+    setDragIndex(null)
+
+    try {
+      await reordenarFotos(id, reordenadas.map((f) => f.id))
+      queryClient.invalidateQueries({ queryKey: ['produtos'] })
+    } catch (err) {
+      setFotosProduto(anterior)
+      toast.error(err?.message || 'Erro ao reordenar fotos.')
     }
   }
 
@@ -505,11 +585,13 @@ export default function ProdutoForm() {
         produtoId = result?.id
       }
 
-      if (fotoFile && produtoId) {
+      if (fotosNovas.length > 0 && produtoId) {
         try {
-          await uploadFoto(produtoId, fotoFile)
+          for (const { file } of fotosNovas) {
+            await uploadFoto(produtoId, file)
+          }
         } catch (fotoErr) {
-          toast.error(`Produto salvo, mas houve erro ao enviar a foto: ${fotoErr?.message || 'erro desconhecido'}`)
+          toast.error(`Produto salvo, mas houve erro ao enviar as fotos: ${fotoErr?.message || 'erro desconhecido'}`)
         }
       }
 
@@ -547,52 +629,69 @@ export default function ProdutoForm() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card title="Foto do produto">
-          <div className="flex flex-wrap items-center gap-4">
-            {fotoPreviewUrl ? (
-              <img
-                src={fotoPreviewUrl}
-                alt="Pré-visualização da foto"
-                className="h-32 w-32 rounded-lg border border-gray-200 object-cover"
-              />
-            ) : fotoSrc(produto?.fotoUrl) ? (
-              <img
-                src={fotoSrc(produto.fotoUrl)}
-                alt={produto?.nome || 'Foto do produto'}
-                className="h-32 w-32 rounded-lg border border-gray-200 object-cover"
-              />
-            ) : (
-              <div className="flex h-32 w-32 items-center justify-center rounded-lg border border-gray-200 bg-gray-100">
-                <ImageIcon className="h-8 w-8 text-gray-400" />
-              </div>
-            )}
+        <Card title="Fotos do produto">
+          {(() => {
+            const itens = isEdit
+              ? fotosProduto.map((f) => ({ key: f.id, src: fotoSrc(f.url), fotoId: f.id, isNova: false }))
+              : fotosNovas.map((f, i) => ({ key: f.previewUrl, src: f.previewUrl, index: i, isNova: true }))
 
-            <div className="flex flex-col gap-2">
-              <label className="block text-sm font-medium text-gray-700">
-                {produto?.fotoUrl || fotoPreviewUrl ? 'Alterar foto' : 'Nenhuma foto'}
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleFotoChange}
-                className="block text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
-              />
-              <p className="text-xs text-gray-500">Imagens até 5MB.</p>
+            return (
+              <>
+                <div className="mb-4 flex flex-wrap gap-3">
+                  {itens.length === 0 && (
+                    <div className="flex h-[110px] w-[110px] items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50">
+                      <ImageIcon className="h-8 w-8 text-gray-400" />
+                    </div>
+                  )}
+                  {itens.map((item, idx) => (
+                    <div
+                      key={item.key}
+                      draggable
+                      onDragStart={() => handleDragStartFoto(idx)}
+                      onDragOver={handleDragOverFoto}
+                      onDrop={() => handleDropFoto(idx)}
+                      className="group relative h-[110px] w-[110px] cursor-move overflow-hidden rounded-lg border border-gray-200"
+                    >
+                      <img
+                        src={item.src}
+                        alt={`Foto ${idx + 1} do produto`}
+                        className="h-full w-full object-cover"
+                      />
+                      {idx === 0 && (
+                        <span className="absolute left-1 top-1 rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                          Principal
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          item.isNova ? handleRemoverFotoNova(item.index) : handleRemoverFoto(item.fotoId)
+                        }
+                        disabled={!item.isNova && removendoFotoId === item.fotoId}
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                        title="Remover foto"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
 
-              {isEdit && produto?.fotoUrl && !fotoFile && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  loading={removendoFoto}
-                  onClick={handleRemoverFoto}
-                  className="w-fit text-red-600 hover:bg-red-50"
-                >
-                  Remover foto
-                </Button>
-              )}
-            </div>
-          </div>
+                <label className="block text-sm font-medium text-gray-700">Adicionar fotos</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleFotoChange}
+                  disabled={enviandoFoto}
+                  className="mt-1 block text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Imagens até 5MB cada. Arraste as miniaturas para reordenar — a primeira é a foto principal.
+                </p>
+              </>
+            )
+          })()}
         </Card>
 
         <Card title="Dados gerais">

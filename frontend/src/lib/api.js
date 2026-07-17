@@ -143,7 +143,7 @@ async function uploadFoto(produtoId, file) {
   const headers = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${API_URL}/api/produtos/${produtoId}/foto`, {
+  const res = await fetch(`${API_URL}/api/produtos/${produtoId}/fotos`, {
     method: 'POST',
     headers,
     body: formData,
@@ -171,8 +171,12 @@ async function uploadFoto(produtoId, file) {
   return data
 }
 
-function deleteFoto(produtoId) {
-  return api.delete(`/produtos/${produtoId}/foto`)
+function deleteFoto(produtoId, fotoId) {
+  return api.delete(`/produtos/${produtoId}/fotos/${fotoId}`)
+}
+
+function reordenarFotos(produtoId, ids) {
+  return api.put(`/produtos/${produtoId}/fotos/ordem`, { ids })
 }
 
 // Upload genérico multipart (não usar api.post, que sempre serializa o body
@@ -275,6 +279,7 @@ export {
   API_URL,
   uploadFoto,
   deleteFoto,
+  reordenarFotos,
   fotoSrc,
   uploadFile,
   uploadWithFields,

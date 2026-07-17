@@ -258,34 +258,94 @@ router.get('/vitrine', asyncHandler(async (req, res) => {
 router.get('/:id', asyncHandler(async (req, res) => {
   const produto = await prisma.produto.findUniqueOrThrow({
     where: { id: req.params.id },
-    include: { categoria: true, marca: true, variacoes: true },
+    include: { categoria: true, marca: true, variacoes: true, fotos: { orderBy: { ordem: 'asc' } } },
   });
   res.json(produto);
 }));
 
-// Upload/troca da foto do produto (multipart, campo "foto").
-router.post('/:id/foto', upload.single('foto'), asyncHandler(async (req, res) => {
+// Upload de uma nova foto do produto (multipart, campo "foto"). Vira a
+// última da lista, salvo se o produto ainda não tiver nenhuma — nesse caso
+// vira a principal (ordem 0) e espelha em Produto.fotoUrl.
+router.post('/:id/fotos', upload.single('foto'), asyncHandler(async (req, res) => {
   if (!req.file) throw Object.assign(new Error('Nenhum arquivo enviado'), { status: 400 });
-  const anterior = await prisma.produto.findUnique({ where: { id: req.params.id }, select: { fotoUrl: true } });
   const filename = `${crypto.randomUUID()}.jpg`;
   await processarFoto(req.file.buffer, path.join(UPLOAD_DIR, filename));
-  const fotoUrl = `/uploads/${filename}`;
-  const produto = await prisma.produto.update({ where: { id: req.params.id }, data: { fotoUrl } });
-  // Remove o arquivo antigo, se houver.
-  if (anterior?.fotoUrl) {
-    const p = path.join(UPLOAD_DIR, path.basename(anterior.fotoUrl));
-    fs.promises.unlink(p).catch(() => {});
-  }
-  res.json(produto);
+  const url = `/uploads/${filename}`;
+
+  const foto = await prisma.$transaction(async (tx) => {
+    const max = await tx.produtoFoto.aggregate({
+      where: { produtoId: req.params.id },
+      _max: { ordem: true },
+    });
+    const ordem = max._max.ordem === null || max._max.ordem === undefined ? 0 : max._max.ordem + 1;
+    const criada = await tx.produtoFoto.create({
+      data: { produtoId: req.params.id, url, ordem },
+    });
+    if (ordem === 0) {
+      await tx.produto.update({ where: { id: req.params.id }, data: { fotoUrl: url } });
+    }
+    return criada;
+  });
+  res.status(201).json(foto);
 }));
 
-router.delete('/:id/foto', asyncHandler(async (req, res) => {
-  const atual = await prisma.produto.findUnique({ where: { id: req.params.id }, select: { fotoUrl: true } });
-  await prisma.produto.update({ where: { id: req.params.id }, data: { fotoUrl: null } });
-  if (atual?.fotoUrl) {
-    fs.promises.unlink(path.join(UPLOAD_DIR, path.basename(atual.fotoUrl))).catch(() => {});
+// Remove uma foto do produto: apaga a linha e o arquivo, reindexa a ordem
+// das restantes e atualiza Produto.fotoUrl para a nova principal (ou null).
+router.delete('/:id/fotos/:fotoId', asyncHandler(async (req, res) => {
+  const { id, fotoId } = req.params;
+  const foto = await prisma.produtoFoto.findUnique({ where: { id: fotoId } });
+  if (!foto || foto.produtoId !== id) {
+    throw Object.assign(new Error('Foto não encontrada'), { status: 404 });
   }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.produtoFoto.delete({ where: { id: fotoId } });
+    const restantes = await tx.produtoFoto.findMany({
+      where: { produtoId: id },
+      orderBy: { ordem: 'asc' },
+    });
+    for (let i = 0; i < restantes.length; i++) {
+      if (restantes[i].ordem !== i) {
+        await tx.produtoFoto.update({ where: { id: restantes[i].id }, data: { ordem: i } });
+      }
+    }
+    await tx.produto.update({
+      where: { id },
+      data: { fotoUrl: restantes[0]?.url || null },
+    });
+  });
+
+  fs.promises.unlink(path.join(UPLOAD_DIR, path.basename(foto.url))).catch(() => {});
   res.status(204).end();
+}));
+
+const ordemFotosSchema = z.object({
+  ids: z.array(z.string()).min(1),
+});
+
+// Reordena as fotos do produto (drag-and-drop no admin). A primeira da
+// lista vira a principal e é espelhada em Produto.fotoUrl.
+router.put('/:id/fotos/ordem', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { ids } = ordemFotosSchema.parse(req.body);
+
+  const fotos = await prisma.produtoFoto.findMany({ where: { produtoId: id } });
+  const idsAtuais = new Set(fotos.map((f) => f.id));
+  const idsEnviados = new Set(ids);
+  if (idsAtuais.size !== idsEnviados.size || [...idsAtuais].some((i) => !idsEnviados.has(i))) {
+    throw Object.assign(new Error('A lista de ids não corresponde às fotos do produto'), { status: 400 });
+  }
+
+  const ordenadas = await prisma.$transaction(async (tx) => {
+    for (let i = 0; i < ids.length; i++) {
+      await tx.produtoFoto.update({ where: { id: ids[i] }, data: { ordem: i } });
+    }
+    const primeira = fotos.find((f) => f.id === ids[0]);
+    await tx.produto.update({ where: { id }, data: { fotoUrl: primeira?.url || null } });
+    return tx.produtoFoto.findMany({ where: { produtoId: id }, orderBy: { ordem: 'asc' } });
+  });
+
+  res.json(ordenadas);
 }));
 
 const includeProduto = {

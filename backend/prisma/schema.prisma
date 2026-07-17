@@ -302,7 +302,7 @@ model Produto {
   fornecedorPadraoId String?
   escalaId           String? // escala de tamanhos (imutável após criação)
   genero             String? // Masculino, Feminino, Unissex, Infantil
-  fotoUrl            String? // caminho da imagem servida pelo backend (/uploads/...)
+  fotoUrl            String? // cache da foto principal (ordem 0 em ProdutoFoto); caminho servido em /uploads/...
   colecao            String? // ex.: "Alto Verão", "Casual"
   estacao            String? // ex.: "Verão 2026", "Inverno 2026"
   // Dados fiscais. `grupoTributacaoId` aponta para um GrupoTributacao
@@ -326,8 +326,23 @@ model Produto {
   escala           EscalaTamanho?   @relation(fields: [escalaId], references: [id])
   grupoTributacao  GrupoTributacao? @relation(fields: [grupoTributacaoId], references: [id])
   variacoes        Variacao[]
+  fotos            ProdutoFoto[]
 
   @@index([nome])
+}
+
+// Fotos do produto (múltiplas, reordenáveis). ordem 0 = principal, espelhada
+// em Produto.fotoUrl para não quebrar PDV/listas/sync que já leem esse campo.
+model ProdutoFoto {
+  id        String   @id @default(uuid())
+  produtoId String
+  produto   Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  url       String   // caminho servido em /uploads, igual Produto.fotoUrl
+  ordem     Int      // 0 = principal (espelhada em Produto.fotoUrl)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([produtoId, ordem])
 }
 
 // Variação = SKU concreto: um tamanho + uma cor de um produto.

@@ -37,6 +37,7 @@ const DELEGATE = {
   // grupoTributacao antes de produto (produto referencia o grupo).
   grupoTributacao: 'grupoTributacao',
   produto: 'produto',
+  produtoFoto: 'produtoFoto',
   variacao: 'variacao',
   cliente: 'cliente',
 };
@@ -150,6 +151,7 @@ async function pull() {
         await prisma[delegate].upsert({ where: { id: data.id }, update: data, create: data });
       }
       if (nome === 'produto' && data.fotoUrl) await baixarFotoSePreciso(data.fotoUrl);
+      if (nome === 'produtoFoto' && data.url) await baixarFotoSePreciso(data.url);
       if (nome === 'configuracaoEmpresa') {
         if (data.logoUrl) await baixarFotoSePreciso(data.logoUrl);
         // O pull genérico não traz certificadoArquivo/certificadoSenha (ver
