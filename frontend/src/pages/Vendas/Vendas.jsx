@@ -133,6 +133,7 @@ export default function Vendas() {
               <Th>Data</Th>
               <Th>Cliente</Th>
               <Th>Vendedor</Th>
+              <Th>Operador</Th>
               <Th>Itens</Th>
               <Th>Total</Th>
               <Th>Status</Th>
@@ -148,6 +149,7 @@ export default function Vendas() {
                 </Td>
                 <Td>{formatDateTime(v.createdAt)}</Td>
                 <Td>{v.cliente?.nome || 'Consumidor final'}</Td>
+                <Td>{v.vendedor?.nome || '—'}</Td>
                 <Td>{v.usuario?.nome}</Td>
                 <Td>{v._count?.itens ?? '-'}</Td>
                 <Td>{formatCurrency(v.total)}</Td>
@@ -191,7 +193,8 @@ export default function Vendas() {
                 <p className="font-medium text-gray-900">Nº {venda.numero}</p>
                 <p className="text-gray-500">{formatDateTime(venda.createdAt)}</p>
                 <p className="text-gray-500">Cliente: {venda.cliente?.nome || 'Consumidor final'}</p>
-                <p className="text-gray-500">Vendedor: {venda.usuario?.nome}</p>
+                <p className="text-gray-500">Vendedor: {venda.vendedor?.nome || '—'}</p>
+                <p className="text-gray-500">Operador: {venda.usuario?.nome}</p>
               </div>
               <Badge variant={statusVariant(venda.status)}>{venda.status}</Badge>
             </div>

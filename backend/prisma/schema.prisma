@@ -87,6 +87,7 @@ model User {
 
   loja                  Loja?                  @relation(fields: [lojaId], references: [id])
   vendas                Venda[]
+  vendasComoVendedor    Venda[]                @relation("VendaVendedor")
   caixas                Caixa[]
   movimentacoes         MovimentacaoEstoque[]
   apiKeys               ApiKey[]
@@ -790,6 +791,7 @@ model Venda {
   numero        Int
   clienteId     String?
   usuarioId     String
+  vendedorId    String?
   caixaId       String?
   lojaId        String?
   pdvTerminalId String?
@@ -804,6 +806,7 @@ model Venda {
 
   cliente       Cliente?              @relation(fields: [clienteId], references: [id])
   usuario       User                  @relation(fields: [usuarioId], references: [id])
+  vendedor      User?                 @relation("VendaVendedor", fields: [vendedorId], references: [id])
   caixa         Caixa?                @relation(fields: [caixaId], references: [id])
   loja          Loja?                 @relation(fields: [lojaId], references: [id])
   pdvTerminal   PDVTerminal?          @relation(fields: [pdvTerminalId], references: [id])

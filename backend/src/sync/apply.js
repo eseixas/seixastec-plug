@@ -35,6 +35,7 @@ async function aplicarVenda(tx, v) {
       numero: v.numero,
       clienteId: v.clienteId || null,
       usuarioId: v.usuarioId,
+      vendedorId: v.vendedorId || null,
       caixaId: v.caixaId || null,
       lojaId: v.lojaId || null,
       pdvTerminalId: v.pdvTerminalId || null,

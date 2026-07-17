@@ -119,6 +119,8 @@ function FrenteCaixa({ caixa, onFechado }) {
   const [cliente, setCliente] = useState(null)
   const [buscaCliente, setBuscaCliente] = useState('')
   const [clientesEnc, setClientesEnc] = useState([])
+  const [vendedor, setVendedor] = useState(null)
+  const [vendedores, setVendedores] = useState([])
   const [pagamentos, setPagamentos] = useState([])
   const [adquirentes, setAdquirentes] = useState([])
   const [finalizando, setFinalizando] = useState(false)
@@ -134,6 +136,7 @@ function FrenteCaixa({ caixa, onFechado }) {
   const [cfgCliente, setCfgCliente] = useState(null)
 
   useEffect(() => { api.get('/adquirentes').then(setAdquirentes).catch(() => {}) }, [])
+  useEffect(() => { api.get('/vendas/vendedores').then(setVendedores).catch(() => {}) }, [])
   useEffect(() => { api.get('/config/pdv').then(setCfgPdv).catch(() => {}) }, [])
   useEffect(() => { api.get('/config/cliente').then(setCfgCliente).catch(() => {}) }, [])
 
@@ -284,6 +287,7 @@ function FrenteCaixa({ caixa, onFechado }) {
         lojaId: caixa.lojaId || null,
         pdvTerminalId: caixa.pdvTerminalId || null,
         clienteId: cliente?.id || null,
+        vendedorId: vendedor?.id || null,
         desconto: descontoNum,
         acrescimo: Number(acrescimo) || 0,
         aprovadorId: aprovador?.id || null,
@@ -302,6 +306,7 @@ function FrenteCaixa({ caixa, onFechado }) {
       })
       setComprovante(venda)
       setItens([]); setPagamentos([]); setDesconto(0); setAcrescimo(0); setCliente(null)
+      setVendedor(null)
       setAprovadorDesconto(null)
       setVersaoVitrine((n) => n + 1)
       toast.success(`Venda #${venda.numero} finalizada`)
@@ -459,6 +464,24 @@ function FrenteCaixa({ caixa, onFechado }) {
                   </button>
                 </div>
               )}
+            </div>
+
+            {/* Vendedor */}
+            <div className="mb-3">
+              <label className="mb-1 block text-xs font-medium uppercase text-gray-500">Vendedor</label>
+              <select
+                value={vendedor?.id || ''}
+                onChange={(e) => {
+                  const v = vendedores.find((x) => x.id === e.target.value)
+                  setVendedor(v ? { id: v.id, nome: v.nome } : null)
+                }}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              >
+                <option value="">— Sem vendedor —</option>
+                {vendedores.map((v) => (
+                  <option key={v.id} value={v.id}>{v.nome}</option>
+                ))}
+              </select>
             </div>
 
             {/* Totais */}

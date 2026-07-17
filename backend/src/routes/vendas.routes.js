@@ -28,6 +28,7 @@ const pagamentoSchema = z.object({
 
 const vendaSchema = z.object({
   clienteId: z.string().optional().nullable(),
+  vendedorId: z.string().optional().nullable(),
   caixaId: z.string().optional().nullable(),
   lojaId: z.string().optional().nullable(),
   pdvTerminalId: z.string().optional().nullable(),
@@ -133,6 +134,7 @@ router.get('/', asyncHandler(async (req, res) => {
     include: {
       cliente: { select: { nome: true } },
       usuario: { select: { nome: true } },
+      vendedor: { select: { nome: true } },
       loja: { select: { nome: true } },
       pagamentos: true,
       _count: { select: { itens: true } },
@@ -143,12 +145,24 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(vendas);
 }));
 
+// Lista de usuários ativos disponíveis para seleção como vendedor no PDV.
+// Precisa vir antes de '/:id' para não colidir com o parâmetro de rota.
+router.get('/vendedores', asyncHandler(async (req, res) => {
+  const vendedores = await prisma.user.findMany({
+    where: { ativo: true },
+    orderBy: { nome: 'asc' },
+    select: { id: true, nome: true, role: true },
+  });
+  res.json(vendedores);
+}));
+
 router.get('/:id', asyncHandler(async (req, res) => {
   const venda = await prisma.venda.findUniqueOrThrow({
     where: { id: req.params.id },
     include: {
       cliente: true,
       usuario: { select: { nome: true } },
+      vendedor: { select: { nome: true } },
       loja: true,
       pagamentos: { include: { adquirente: true } },
       recebiveis: { include: { adquirente: true } },
@@ -176,6 +190,13 @@ router.post('/', asyncHandler(async (req, res) => {
   }
   if (!lojaId) {
     throw Object.assign(new Error('lojaId é obrigatório para registrar a venda'), { status: 400 });
+  }
+
+  if (dados.vendedorId) {
+    const vendedor = await prisma.user.findUnique({ where: { id: dados.vendedorId } });
+    if (!vendedor || !vendedor.ativo) {
+      throw Object.assign(new Error('Vendedor inválido'), { status: 400 });
+    }
   }
 
   const subtotal = dados.itens.reduce(
@@ -240,6 +261,7 @@ router.post('/', asyncHandler(async (req, res) => {
       data: {
         numero,
         clienteId: dados.clienteId || null,
+        vendedorId: dados.vendedorId || null,
         caixaId: dados.caixaId || null,
         lojaId,
         pdvTerminalId: dados.pdvTerminalId || null,
