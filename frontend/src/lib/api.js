@@ -217,7 +217,7 @@ function fotoSrc(fotoUrl) {
 
 // Upload multipart com campos extras no mesmo FormData (além do arquivo).
 // `fields` é um objeto { chave: valor } serializado como campos de texto.
-async function uploadWithFields(path, fieldName, file, fields = {}) {
+async function uploadWithFields(path, fieldName, file, fields = {}, { method = 'POST' } = {}) {
   const formData = new FormData()
   formData.append(fieldName, file)
   for (const [key, value] of Object.entries(fields)) {
@@ -228,7 +228,7 @@ async function uploadWithFields(path, fieldName, file, fields = {}) {
   const headers = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers, body: formData })
+  const res = await fetch(`${API_BASE}${path}`, { method, headers, body: formData })
 
   if (res.status === 401) {
     setToken(null)
@@ -260,6 +260,16 @@ function uploadExtrato(contaBancariaId, formato, file) {
   })
 }
 
+// Logotipo da empresa (Configurações → Empresa) — PUT multipart, sem campos extra.
+function uploadLogoEmpresa(file) {
+  return uploadWithFields('/empresa/logo', 'logo', file, {}, { method: 'PUT' })
+}
+
+// Certificado digital A1 — arquivo .pfx/.p12 + senha (opcional) no mesmo request.
+function uploadCertificadoEmpresa(file, senha) {
+  return uploadWithFields('/empresa/certificado', 'certificado', file, senha ? { senha } : {}, { method: 'PUT' })
+}
+
 export {
   ApiError,
   API_URL,
@@ -269,4 +279,6 @@ export {
   uploadFile,
   uploadWithFields,
   uploadExtrato,
+  uploadLogoEmpresa,
+  uploadCertificadoEmpresa,
 }

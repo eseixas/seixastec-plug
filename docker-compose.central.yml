@@ -44,6 +44,8 @@ services:
       - "${CENTRAL_BACKEND_PORT:-4000}:4000"
     volumes:
       - central_uploads:/app/uploads
+      # Certificado digital A1 — diretório privado, NUNCA servido via /uploads.
+      - central_certs:/app/certs
 
   admin:
     build:
@@ -81,3 +83,4 @@ volumes:
   central_db_data:
   central_uploads:
   central_backup:
+  central_certs:

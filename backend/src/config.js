@@ -34,10 +34,13 @@ export const FISCAL_ID_CSC = process.env.FISCAL_ID_CSC || null;
 // dados de emissão; sem isso, vendas continuam funcionando normalmente.
 export const FISCAL_HABILITADO = String(process.env.FISCAL_HABILITADO || '').toLowerCase() === 'true';
 
+// NOTA: FISCAL_CERT_PATH/FISCAL_CERT_SENHA não são mais exigidos aqui — o
+// certificado pode vir de Configurações → Empresa no admin central (desce
+// via sync e é lido por fiscal/certificado.js, que cai para essas env vars
+// só se ConfiguracaoEmpresa ainda não tiver certificado). CSC/idCSC continuam
+// vindo só de env: não fazem parte do certificado, são específicos da SEFAZ.
 export function assertFiscalConfig() {
   const faltando = [];
-  if (!FISCAL_CERT_PATH) faltando.push('FISCAL_CERT_PATH');
-  if (!FISCAL_CERT_SENHA) faltando.push('FISCAL_CERT_SENHA');
   if (!FISCAL_CSC) faltando.push('FISCAL_CSC');
   if (!FISCAL_ID_CSC) faltando.push('FISCAL_ID_CSC');
   if (faltando.length) {
