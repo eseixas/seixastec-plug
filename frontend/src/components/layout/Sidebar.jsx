@@ -58,8 +58,10 @@ const sections = [
     title: 'Administração',
     items: [
       { to: '/lojas', label: 'Lojas & PDVs', icon: Building2 },
-      { to: '/etiquetas', label: 'Etiquetas', icon: Barcode },
+      { to: '/etiquetas', label: 'Etiquetas', icon: Barcode, end: true },
+      { to: '/etiquetas/modelos', label: 'Modelos de Etiqueta', icon: Tags },
       { to: '/notas-fiscais', label: 'Notas Fiscais', icon: FileText },
+      { to: '/fiscal/configuracoes', label: 'Configurações Fiscais', icon: Landmark },
       { to: '/usuarios', label: 'Usuários', icon: UserCog, roles: ['ADMIN'] },
       { to: '/configuracoes', label: 'Configurações', icon: Settings },
     ],

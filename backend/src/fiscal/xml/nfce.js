@@ -8,6 +8,7 @@
 import { create } from 'xmlbuilder2';
 import { montarChaveAcesso } from '../chaveAcesso.js';
 import { urlQrCode } from '../qrcode.js';
+import { resolverTributacaoProduto } from '../tributacao.js';
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 const fmt2 = (n) => round2(n).toFixed(2);
@@ -64,9 +65,10 @@ function isoComOffset(date) {
  * @param {number} params.numero - número da NotaFiscal (por loja/modelo/série)
  * @param {number} params.serie
  * @param {string} params.ambiente - "homologacao" | "producao"
+ * @param {string} [params.naturezaOperacao] - descrição da natureza de operação (natOp)
  * @returns {{ xml: string, chaveAcesso: string }}
  */
-export function montarXmlNfce({ venda, loja, configFiscal, numero, serie, ambiente }) {
+export function montarXmlNfce({ venda, loja, configFiscal, numero, serie, ambiente, naturezaOperacao }) {
   if (!loja.cnpj) throw new Error('Loja sem CNPJ cadastrado — obrigatório para emissão fiscal.');
   if (!loja.uf) throw new Error('Loja sem UF cadastrada — obrigatório para emissão fiscal.');
   if (!loja.crt) throw new Error('Loja sem CRT (regime tributário) cadastrado.');
@@ -90,10 +92,8 @@ export function montarXmlNfce({ venda, loja, configFiscal, numero, serie, ambien
   const det = venda.itens.map((item, idx) => {
     const produto = item.variacao.produto;
     const vProd = round2(Number(item.precoUnit) * item.quantidade - Number(item.desconto || 0));
-    const origem = produto.origemMercadoria ?? configFiscal.origemMercadoria;
-    const csosn = produto.csosn ?? configFiscal.csosn;
-    const cfop = produto.cfop ?? configFiscal.cfop;
-    const ncm = produto.ncm ?? configFiscal.ncmPadrao;
+    // Precedência: campo do produto > grupo de tributação > ConfiguracaoFiscal.
+    const { origem, csosn, cfop, ncm } = resolverTributacaoProduto(produto, produto.grupoTributacao, configFiscal);
     if (!ncm) throw new Error(`Produto "${produto.nome}" sem NCM definido (e sem NCM padrão em Configuração Fiscal).`);
 
     return {
@@ -158,7 +158,7 @@ export function montarXmlNfce({ venda, loja, configFiscal, numero, serie, ambien
     ide: {
       cUF: chaveAcesso.slice(0, 2),
       cNF: chaveAcesso.slice(35, 43),
-      natOp: 'Venda',
+      natOp: naturezaOperacao || 'Venda ao consumidor',
       mod: '65',
       serie: String(serie),
       nNF: String(numero),

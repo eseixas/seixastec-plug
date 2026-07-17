@@ -7,6 +7,7 @@
 // QR Code/infNFeSupl (isso é exclusivo de NFC-e).
 import { create } from 'xmlbuilder2';
 import { montarChaveAcesso } from '../chaveAcesso.js';
+import { resolverTributacaoProduto } from '../tributacao.js';
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 const fmt2 = (n) => round2(n).toFixed(2);
@@ -61,8 +62,8 @@ export function montarXmlNfe({ dadosManual, loja, configFiscal, numero, serie, a
 
   const det = itens.map((item, idx) => {
     const vProd = round2(Number(item.valorUnitario) * Number(item.quantidade));
-    const origem = configFiscal.origemMercadoria;
-    const csosn = configFiscal.csosn;
+    // NF-e manual não tem Produto/grupo — só o singleton define origem/CSOSN.
+    const { origem, csosn } = resolverTributacaoProduto(null, null, configFiscal);
     return {
       '@nItem': String(idx + 1),
       prod: {

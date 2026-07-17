@@ -15,6 +15,7 @@ import { cancelarNfce } from '../fiscal/soap/cancelamento.js';
 import { inutilizarNumeracao } from '../fiscal/soap/inutilizacao.js';
 import { statusCertificado, recarregarCertificado } from '../fiscal/certificado.js';
 import { proximoNumero } from '../fiscal/numeracao.js';
+import { resolverSeriePadrao } from '../fiscal/parametrosFiscais.js';
 import { montarXmlProc, nomeArquivoXml } from '../fiscal/xml/procNfe.js';
 
 const router = Router();
@@ -243,11 +244,12 @@ router.post('/notas/nfe-manual', asyncHandler(async (req, res) => {
   const cfgFiscal = await prisma.configuracaoFiscal.upsert({ where: { id: 'singleton' }, update: {}, create: { id: 'singleton' } });
 
   const nota = await prisma.$transaction(async (tx) => {
-    const numero = await proximoNumero(tx, { lojaId: LOJA_ID, modelo: '55', serie: cfgFiscal.serieNfe });
+    const serie = await resolverSeriePadrao(tx, { modelo: '55', fallback: cfgFiscal.serieNfe });
+    const numero = await proximoNumero(tx, { lojaId: LOJA_ID, modelo: '55', serie });
     return tx.notaFiscal.create({
       data: {
         modelo: '55',
-        serie: cfgFiscal.serieNfe,
+        serie,
         numero,
         lojaId: LOJA_ID,
         ambiente: cfgFiscal.ambiente,

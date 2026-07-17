@@ -50,6 +50,7 @@ const produtoSchema = z.object({
   marcaId: z.string().optional().nullable(),
   fornecedorPadraoId: z.string().optional().nullable(),
   escalaId: z.string().optional().nullable(),
+  grupoTributacaoId: z.string().optional().nullable(),
   genero: z.string().optional().nullable(),
   colecao: z.string().optional().nullable(),
   estacao: z.string().optional().nullable(),

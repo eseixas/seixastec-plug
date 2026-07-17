@@ -13,6 +13,7 @@ import Adquirentes from './pages/Adquirentes/Adquirentes.jsx'
 import Recebiveis from './pages/Recebiveis/Recebiveis.jsx'
 import Lojas from './pages/Lojas/Lojas.jsx'
 import NotasFiscais from './pages/Fiscal/NotasFiscais.jsx'
+import ConfiguracoesFiscais from './pages/Fiscal/ConfiguracoesFiscais.jsx'
 import Configuracoes from './pages/Configuracoes/Configuracoes.jsx'
 import ContasBancariasList from './pages/Financeiro/ContasBancariasList.jsx'
 import CategoriasFinanceirasList from './pages/Financeiro/CategoriasFinanceirasList.jsx'
@@ -26,6 +27,8 @@ import ComprasList from './pages/Compras/ComprasList.jsx'
 import CompraForm from './pages/Compras/CompraForm.jsx'
 import CompraDetail from './pages/Compras/CompraDetail.jsx'
 import Etiquetas from './pages/Etiquetas/Etiquetas.jsx'
+import ModelosEtiqueta from './pages/Etiquetas/ModelosEtiqueta.jsx'
+import ModeloEtiquetaForm from './pages/Etiquetas/ModeloEtiquetaForm.jsx'
 
 export default function App() {
   return (
@@ -69,7 +72,11 @@ export default function App() {
         </Route>
         <Route path="/lojas" element={<Lojas />} />
         <Route path="/etiquetas" element={<Etiquetas />} />
+        <Route path="/etiquetas/modelos" element={<ModelosEtiqueta />} />
+        <Route path="/etiquetas/modelos/novo" element={<ModeloEtiquetaForm />} />
+        <Route path="/etiquetas/modelos/:id" element={<ModeloEtiquetaForm />} />
         <Route path="/notas-fiscais" element={<NotasFiscais />} />
+        <Route path="/fiscal/configuracoes" element={<ConfiguracoesFiscais />} />
         <Route
           path="/usuarios"
           element={

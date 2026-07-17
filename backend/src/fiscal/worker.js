@@ -8,6 +8,8 @@ import { montarXmlNfe } from './xml/nfe.js';
 import { assinarNfe } from './xml/assinatura.js';
 import { enviarAutorizacaoNfce } from './soap/autorizacao.js';
 import { enfileirar } from '../sync/outbox.js';
+import { sincronizarConfigCertificado } from './certificado.js';
+import { resolverNaturezaPadrao } from './parametrosFiscais.js';
 
 const INTERVALO_MS = Number(process.env.FISCAL_INTERVAL_MS || 20000);
 const MAX_TENTATIVAS_REJEICAO = 3; // rejeição normalmente é erro de dado, não transitório
@@ -38,8 +40,9 @@ async function processarNota(nota) {
   } else {
     const venda = await prisma.venda.findUniqueOrThrow({
       where: { id: nota.vendaId },
-      include: { itens: { include: { variacao: { include: { produto: true } } } }, pagamentos: true },
+      include: { itens: { include: { variacao: { include: { produto: { include: { grupoTributacao: true } } } } } }, pagamentos: true },
     });
+    const naturezaOperacao = await resolverNaturezaPadrao(prisma);
     ({ xml, chaveAcesso, idInfNFe, qrCodeUrl } = montarXmlNfce({
       venda,
       loja,
@@ -47,6 +50,7 @@ async function processarNota(nota) {
       numero: nota.numero,
       serie: nota.serie,
       ambiente: nota.ambiente,
+      naturezaOperacao,
     }));
   }
   const xmlAssinado = assinarNfe(xml, idInfNFe, qrCodeUrl);
@@ -126,6 +130,7 @@ export function iniciarWorkerFiscal() {
   }
   assertFiscalConfig();
   console.log(`[fiscal] worker fiscal iniciado (loja=${LOJA_ID}, intervalo=${INTERVALO_MS}ms).`);
+  sincronizarConfigCertificado().catch(() => {}); // tenta usar o certificado do banco assim que possível
   setTimeout(ciclo, 5000);
   setInterval(ciclo, INTERVALO_MS);
 }

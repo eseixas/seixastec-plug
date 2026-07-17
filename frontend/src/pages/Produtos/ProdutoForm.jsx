@@ -46,6 +46,7 @@ const emptyForm = {
   genero: '',
   colecao: '',
   estacao: '',
+  grupoTributacaoId: '',
   ncm: '',
   cest: '',
   origemMercadoria: '',
@@ -112,6 +113,11 @@ export default function ProdutoForm() {
     enabled: !isEdit,
   })
 
+  const { data: gruposTributacao } = useQuery({
+    queryKey: ['grupos-tributacao', 'select'],
+    queryFn: () => api.get('/fiscal-config/grupos-tributacao'),
+  })
+
   const { data: produto, isLoading: isLoadingProduto } = useQuery({
     queryKey: ['produtos', id],
     queryFn: () => api.get(`/produtos/${id}`),
@@ -131,6 +137,7 @@ export default function ProdutoForm() {
         genero: produto.genero || '',
         colecao: produto.colecao || '',
         estacao: produto.estacao || '',
+        grupoTributacaoId: produto.grupoTributacaoId || '',
         ncm: produto.ncm || '',
         cest: produto.cest || '',
         origemMercadoria: produto.origemMercadoria ?? '',
@@ -470,6 +477,8 @@ export default function ProdutoForm() {
       genero: form.genero || undefined,
       colecao: form.colecao || undefined,
       estacao: form.estacao || undefined,
+      // null (não undefined) para permitir DESVINCULAR o grupo ao editar.
+      grupoTributacaoId: form.grupoTributacaoId || null,
       ncm: form.ncm || undefined,
       cest: form.cest || undefined,
       origemMercadoria: form.origemMercadoria,
@@ -722,6 +731,24 @@ export default function ProdutoForm() {
         </Card>
 
         <Card title="Dados fiscais">
+          <div className="mb-4">
+            <Select
+              label="Grupo de tributação"
+              value={form.grupoTributacaoId}
+              onChange={(e) => handleChange('grupoTributacaoId', e.target.value)}
+            >
+              <option value="">Nenhum (usar campos abaixo / padrão)</option>
+              {(gruposTributacao || []).map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.nome}
+                </option>
+              ))}
+            </Select>
+            <p className="mt-1 text-xs text-gray-400">
+              Opcional. O grupo define origem/CSOSN/CFOP/NCM reutilizáveis. Os campos preenchidos
+              abaixo têm precedência e sobrescrevem o grupo na emissão.
+            </p>
+          </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
               label="NCM"
