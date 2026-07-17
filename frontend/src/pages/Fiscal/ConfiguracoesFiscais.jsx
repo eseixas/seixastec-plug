@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
 import { api } from '../../lib/api.js'
 import { useToast } from '../../context/ToastContext.jsx'
+import PadroesFiscaisPanel from './PadroesFiscaisPanel.jsx'
 import {
   Button,
   Input,
@@ -21,6 +22,7 @@ import {
 } from '../../components/ui/index.js'
 
 const ABAS = [
+  { id: 'padroes', label: 'Padrões' },
   { id: 'grupos', label: 'Grupos de Tributação' },
   { id: 'series', label: 'Séries de NF' },
   { id: 'naturezas', label: 'Naturezas de Operação' },
@@ -477,7 +479,7 @@ function NaturezasOperacao() {
 }
 
 export default function ConfiguracoesFiscais() {
-  const [aba, setAba] = useState('grupos')
+  const [aba, setAba] = useState('padroes')
 
   return (
     <div>
@@ -502,9 +504,12 @@ export default function ConfiguracoesFiscais() {
         ))}
       </div>
 
-      {aba === 'grupos' && <GruposTributacao />}
-      {aba === 'series' && <SeriesNf />}
-      {aba === 'naturezas' && <NaturezasOperacao />}
+      <div key={aba} className="animate-fadeIn">
+        {aba === 'padroes' && <PadroesFiscaisPanel />}
+        {aba === 'grupos' && <GruposTributacao />}
+        {aba === 'series' && <SeriesNf />}
+        {aba === 'naturezas' && <NaturezasOperacao />}
+      </div>
     </div>
   )
 }
