@@ -59,14 +59,36 @@ router.post('/:id/movimento', asyncHandler(async (req, res) => {
   res.status(201).json(mov);
 }));
 
+// Confere que aprovadorId é um usuário ativo com role ADMIN/GERENTE.
+async function validarAprovador(aprovadorId) {
+  if (!aprovadorId) {
+    throw Object.assign(new Error('Aprovação de gerente é obrigatória'), { status: 400 });
+  }
+  const aprovador = await prisma.user.findUnique({ where: { id: aprovadorId } });
+  if (!aprovador || !aprovador.ativo || !['ADMIN', 'GERENTE'].includes(aprovador.role)) {
+    throw Object.assign(new Error('Aprovador inválido'), { status: 400 });
+  }
+  return aprovador;
+}
+
 // Fecha o caixa e retorna o resumo (esperado x informado).
 router.post('/:id/fechar', asyncHandler(async (req, res) => {
-  const { valorFechamento, observacao } = z
+  const { valorFechamento, observacao, aprovadorId } = z
     .object({
       valorFechamento: z.coerce.number().nonnegative(),
       observacao: z.string().optional().nullable(),
+      aprovadorId: z.string().optional().nullable(),
     })
     .parse(req.body);
+
+  const cfgPdv = await prisma.configuracaoPdv.upsert({
+    where: { id: 'singleton' },
+    update: {},
+    create: { id: 'singleton' },
+  });
+  if (cfgPdv.exigirAprovacaoFechamento) {
+    await validarAprovador(aprovadorId);
+  }
 
   const caixa = await prisma.caixa.findUniqueOrThrow({
     where: { id: req.params.id },

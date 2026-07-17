@@ -7,6 +7,7 @@ import { IS_EDGE, IS_CENTRAL, LOJA_ID, FISCAL_HABILITADO } from '../config.js';
 import { getSaldo, aplicarMovimento } from '../sync/estoque.js';
 import { enfileirar } from '../sync/outbox.js';
 import { enfileirarNfce } from '../fiscal/fila.js';
+import { resolverSeriePadrao } from '../fiscal/parametrosFiscais.js';
 import { creditarRecebiveisSemConta } from '../lib/creditarContaPrincipal.js';
 
 const router = Router();
@@ -35,7 +36,21 @@ const vendaSchema = z.object({
   observacao: z.string().optional().nullable(),
   itens: z.array(itemSchema).min(1),
   pagamentos: z.array(pagamentoSchema).min(1),
+  aprovadorId: z.string().optional().nullable(),
 });
+
+// Confere que aprovadorId é um usuário ativo com role ADMIN/GERENTE — usado
+// para as aprovações de gerente (desconto, cancelamento, fechamento).
+async function validarAprovador(tx, aprovadorId) {
+  if (!aprovadorId) {
+    throw Object.assign(new Error('Aprovação de gerente é obrigatória'), { status: 400 });
+  }
+  const aprovador = await tx.user.findUnique({ where: { id: aprovadorId } });
+  if (!aprovador || !aprovador.ativo || !['ADMIN', 'GERENTE'].includes(aprovador.role)) {
+    throw Object.assign(new Error('Aprovador inválido'), { status: 400 });
+  }
+  return aprovador;
+}
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const addDias = (base, dias) => {
@@ -100,9 +115,10 @@ async function calcularPagamento(tx, pag) {
 }
 
 router.get('/', asyncHandler(async (req, res) => {
-  const { status, de, ate } = req.query;
+  const { status, de, ate, caixaId } = req.query;
   const where = {
     ...(status ? { status: String(status) } : {}),
+    ...(caixaId ? { caixaId: String(caixaId) } : {}),
     ...(de || ate
       ? {
           createdAt: {
@@ -172,14 +188,48 @@ router.post('/', asyncHandler(async (req, res) => {
     throw Object.assign(new Error('Soma dos pagamentos difere do total da venda'), { status: 400 });
   }
 
+  // Enforcement das regras de comportamento do PDV — não confiar só no front.
+  const descontoTotal =
+    (dados.desconto || 0) + dados.itens.reduce((acc, i) => acc + (i.desconto || 0), 0);
+  const cfgPdv = await prisma.configuracaoPdv.upsert({
+    where: { id: 'singleton' },
+    update: {},
+    create: { id: 'singleton' },
+  });
+  if (descontoTotal > 0) {
+    if (!cfgPdv.descontoHabilitado) {
+      throw Object.assign(new Error('Desconto desabilitado nas configurações do PDV'), { status: 400 });
+    }
+    if (cfgPdv.descontoMaximoPercentual != null) {
+      const percentualDesconto = subtotal > 0 ? (descontoTotal / subtotal) * 100 : 0;
+      if (percentualDesconto > Number(cfgPdv.descontoMaximoPercentual)) {
+        throw Object.assign(
+          new Error(`Desconto acima do limite permitido (${Number(cfgPdv.descontoMaximoPercentual)}%)`),
+          { status: 400 }
+        );
+      }
+    }
+    if (cfgPdv.exigirGerenteDesconto) {
+      await validarAprovador(prisma, dados.aprovadorId);
+    }
+  }
+
   const venda = await prisma.$transaction(async (tx) => {
     // Valida saldo por loja (EstoqueLocal) antes de debitar.
+    const semEstoque = [];
     for (const item of dados.itens) {
       const variacao = await tx.variacao.findUniqueOrThrow({ where: { id: item.variacaoId } });
       const saldo = await getSaldo(tx, lojaId, item.variacaoId);
       if (saldo < item.quantidade) {
-        throw Object.assign(new Error(`Estoque insuficiente para SKU ${variacao.sku}`), { status: 400 });
+        if (cfgPdv.bloquearVendaSemEstoque) {
+          semEstoque.push({ variacaoId: item.variacaoId, sku: variacao.sku, saldo, solicitado: item.quantidade });
+        } else {
+          throw Object.assign(new Error(`Estoque insuficiente para SKU ${variacao.sku}`), { status: 400 });
+        }
       }
+    }
+    if (semEstoque.length) {
+      throw Object.assign(new Error('Itens sem estoque suficiente'), { status: 400, itens: semEstoque });
     }
 
     // Numeração POR LOJA, gerada localmente (contador max+1 da loja).
@@ -297,11 +347,12 @@ router.post('/', asyncHandler(async (req, res) => {
         update: {},
         create: { id: 'singleton' },
       });
+      const serie = await resolverSeriePadrao(tx, { modelo: '65', fallback: cfgFiscal.serieNfce });
       const nota = await enfileirarNfce(tx, {
         lojaId,
         vendaId: novaVenda.id,
         ambiente: cfgFiscal.ambiente,
-        serie: cfgFiscal.serieNfce,
+        serie,
       });
       await enfileirar(tx, 'nota_fiscal', nota.id, nota);
     }
@@ -312,7 +363,21 @@ router.post('/', asyncHandler(async (req, res) => {
   res.status(201).json(venda);
 }));
 
+const cancelarSchema = z.object({
+  aprovadorId: z.string().optional().nullable(),
+});
+
 router.post('/:id/cancelar', asyncHandler(async (req, res) => {
+  const { aprovadorId } = cancelarSchema.parse(req.body || {});
+  const cfgPdv = await prisma.configuracaoPdv.upsert({
+    where: { id: 'singleton' },
+    update: {},
+    create: { id: 'singleton' },
+  });
+  if (cfgPdv.exigirGerenteCancelamento) {
+    await validarAprovador(prisma, aprovadorId);
+  }
+
   const venda = await prisma.$transaction(async (tx) => {
     const v = await tx.venda.findUniqueOrThrow({
       where: { id: req.params.id },

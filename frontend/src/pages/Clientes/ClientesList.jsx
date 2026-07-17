@@ -70,6 +70,18 @@ export default function ClientesList() {
     queryFn: () => api.get(`/clientes?q=${encodeURIComponent(search)}`),
   })
 
+  const { data: cfgCliente } = useQuery({
+    queryKey: ['config-cliente'],
+    queryFn: () => api.get('/config/cliente'),
+  })
+
+  const digitos = (form.cpfCnpj || '').replace(/\D/g, '')
+  const ehPJ = digitos.length === 14
+  const camposObrigatorios = ehPJ
+    ? cfgCliente?.camposObrigatoriosPJ || []
+    : cfgCliente?.camposObrigatoriosPF || []
+  const obrigatorio = (campo) => camposObrigatorios.includes(campo)
+
   const saveMutation = useMutation({
     mutationFn: (payload) => {
       const body = {
@@ -126,6 +138,25 @@ export default function ClientesList() {
     e.preventDefault()
     if (!form.nome.trim()) {
       toast.error('O nome do cliente é obrigatório.')
+      return
+    }
+    if (obrigatorio('cpfCnpj') && !form.cpfCnpj.trim()) {
+      toast.error('CPF/CNPJ é obrigatório.')
+      return
+    }
+    if (obrigatorio('email') && !form.email.trim()) {
+      toast.error('E-mail é obrigatório.')
+      return
+    }
+    if (obrigatorio('telefone') && !form.telefone.trim()) {
+      toast.error('Telefone é obrigatório.')
+      return
+    }
+    if (
+      obrigatorio('endereco') &&
+      (!form.cep.trim() || !form.logradouro.trim() || !form.numero.trim() || !form.cidade.trim() || !form.uf.trim())
+    ) {
+      toast.error('Endereço completo (CEP, logradouro, número, cidade e UF) é obrigatório.')
       return
     }
     saveMutation.mutate(form)
@@ -252,18 +283,18 @@ export default function ClientesList() {
                 containerClassName="col-span-2"
               />
               <Input
-                label="CPF/CNPJ"
+                label={obrigatorio('cpfCnpj') ? 'CPF/CNPJ *' : 'CPF/CNPJ'}
                 value={form.cpfCnpj}
                 onChange={(e) => handleChange('cpfCnpj', e.target.value)}
               />
               <Input
-                label="E-mail"
+                label={obrigatorio('email') ? 'E-mail *' : 'E-mail'}
                 type="email"
                 value={form.email}
                 onChange={(e) => handleChange('email', e.target.value)}
               />
               <Input
-                label="Telefone"
+                label={obrigatorio('telefone') ? 'Telefone *' : 'Telefone'}
                 value={form.telefone}
                 onChange={(e) => handleChange('telefone', e.target.value)}
               />
@@ -274,24 +305,24 @@ export default function ClientesList() {
             <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Endereço</h3>
             <div className="grid grid-cols-2 gap-4">
               <Input
-                label="CEP"
+                label={obrigatorio('endereco') ? 'CEP *' : 'CEP'}
                 value={form.cep}
                 onChange={(e) => handleChange('cep', e.target.value)}
               />
               <Input
-                label="UF"
+                label={obrigatorio('endereco') ? 'UF *' : 'UF'}
                 maxLength={2}
                 value={form.uf}
                 onChange={(e) => handleChange('uf', e.target.value.toUpperCase())}
               />
               <Input
-                label="Logradouro"
+                label={obrigatorio('endereco') ? 'Logradouro *' : 'Logradouro'}
                 value={form.logradouro}
                 onChange={(e) => handleChange('logradouro', e.target.value)}
                 containerClassName="col-span-2"
               />
               <Input
-                label="Número"
+                label={obrigatorio('endereco') ? 'Número *' : 'Número'}
                 value={form.numero}
                 onChange={(e) => handleChange('numero', e.target.value)}
               />
@@ -306,7 +337,7 @@ export default function ClientesList() {
                 onChange={(e) => handleChange('bairro', e.target.value)}
               />
               <Input
-                label="Cidade"
+                label={obrigatorio('endereco') ? 'Cidade *' : 'Cidade'}
                 value={form.cidade}
                 onChange={(e) => handleChange('cidade', e.target.value)}
               />

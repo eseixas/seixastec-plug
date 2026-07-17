@@ -44,9 +44,42 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json(cliente);
 }));
 
+// Valida os campos obrigatórios configurados em ConfiguracaoCliente. `dados`
+// é o payload já mesclado com o registro existente (para PUT parcial).
+async function validarCamposObrigatorios(req, dados) {
+  const origemPdv = req.headers['x-origem'] === 'pdv';
+  const cfg = await prisma.configuracaoCliente.upsert({
+    where: { id: 'singleton' },
+    update: {},
+    create: { id: 'singleton' },
+  });
+  if (origemPdv && !cfg.aplicarNoPdv) return;
+
+  const digitos = (dados.cpfCnpj || '').replace(/\D/g, '');
+  const ehPJ = digitos.length === 14;
+  const lista = ehPJ ? cfg.camposObrigatoriosPJ : cfg.camposObrigatoriosPF;
+
+  const faltando = [];
+  for (const campo of lista) {
+    if (campo === 'endereco') {
+      const completo = dados.cep && dados.logradouro && dados.numero && dados.cidade && dados.uf;
+      if (!completo) faltando.push('endereco');
+    } else if (!dados[campo]) {
+      faltando.push(campo);
+    }
+  }
+  if (faltando.length) {
+    throw Object.assign(
+      new Error(`Campos obrigatórios não preenchidos: ${faltando.join(', ')}`),
+      { status: 400 }
+    );
+  }
+}
+
 router.post('/', asyncHandler(async (req, res) => {
   const data = schema.parse(req.body);
   if (data.email === '') data.email = null;
+  await validarCamposObrigatorios(req, data);
   const cliente = await prisma.cliente.create({ data });
   res.status(201).json(cliente);
 }));
@@ -54,6 +87,8 @@ router.post('/', asyncHandler(async (req, res) => {
 router.put('/:id', asyncHandler(async (req, res) => {
   const data = schema.partial().parse(req.body);
   if (data.email === '') data.email = null;
+  const existente = await prisma.cliente.findUniqueOrThrow({ where: { id: req.params.id } });
+  await validarCamposObrigatorios(req, { ...existente, ...data });
   const cliente = await prisma.cliente.update({ where: { id: req.params.id }, data });
   res.json(cliente);
 }));
