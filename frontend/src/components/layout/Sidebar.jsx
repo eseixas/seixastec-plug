@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Shirt,
@@ -19,6 +20,7 @@ import {
   ShoppingCart,
   Barcode,
   FileCheck2,
+  ChevronDown,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext.jsx'
 
@@ -59,17 +61,104 @@ const sections = [
     items: [
       { to: '/lojas', label: 'Lojas & PDVs', icon: Building2 },
       { to: '/etiquetas', label: 'Etiquetas', icon: Barcode, end: true },
-      { to: '/etiquetas/modelos', label: 'Modelos de Etiqueta', icon: Tags },
       { to: '/notas-fiscais', label: 'Notas Fiscais', icon: FileText },
-      { to: '/fiscal/configuracoes', label: 'Configurações Fiscais', icon: Landmark },
-      { to: '/usuarios', label: 'Usuários', icon: UserCog, roles: ['ADMIN'] },
-      { to: '/configuracoes', label: 'Configurações', icon: Settings },
+      {
+        label: 'Configurações',
+        icon: Settings,
+        children: [
+          { to: '/configuracoes', label: 'Geral', icon: Settings },
+          { to: '/fiscal/configuracoes', label: 'Fiscais', icon: Landmark },
+          { to: '/etiquetas/modelos', label: 'Modelos de Etiqueta', icon: Tags },
+          { to: '/usuarios', label: 'Usuários', icon: UserCog, roles: ['ADMIN'] },
+        ],
+      },
     ],
   },
 ]
 
 function canSee(entry, role) {
   return !entry.roles || entry.roles.includes(role)
+}
+
+function filterItem(item, role) {
+  if (!canSee(item, role)) return null
+  if (item.children) {
+    const children = item.children.filter((child) => canSee(child, role))
+    if (children.length === 0) return null
+    return { ...item, children }
+  }
+  return item
+}
+
+const navLinkClasses = ({ isActive }) =>
+  `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+    isActive
+      ? 'bg-indigo-50 text-indigo-700'
+      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+  }`
+
+function isChildActive(item, pathname) {
+  return item.children?.some((child) => pathname.startsWith(child.to)) ?? false
+}
+
+function SidebarParentItem({ item }) {
+  const location = useLocation()
+  const childActive = isChildActive(item, location.pathname)
+  const [open, setOpen] = useState(childActive)
+
+  useEffect(() => {
+    if (childActive) setOpen(true)
+  }, [childActive])
+
+  const Icon = item.icon
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+          childActive
+            ? 'bg-indigo-50 text-indigo-700'
+            : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+        }`}
+      >
+        <Icon size={18} />
+        <span className="flex-1 text-left">{item.label}</span>
+        <ChevronDown
+          size={16}
+          className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      <div
+        className={`grid transition-[grid-template-rows] duration-200 ease-in-out ${
+          open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3">
+            {item.children.map(({ to, label, icon: ChildIcon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                className={({ isActive }) =>
+                  `flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+                    isActive
+                      ? 'bg-indigo-50 text-indigo-700'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
+                  }`
+                }
+              >
+                <ChildIcon size={16} />
+                {label}
+              </NavLink>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export default function Sidebar() {
@@ -79,7 +168,9 @@ export default function Sidebar() {
     .filter((section) => canSee(section, user?.role))
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => canSee(item, user?.role)),
+      items: section.items
+        .map((item) => filterItem(item, user?.role))
+        .filter(Boolean),
     }))
     .filter((section) => section.items.length > 0)
 
@@ -102,23 +193,21 @@ export default function Sidebar() {
                 {section.title}
               </p>
             )}
-            {section.items.map(({ to, label, icon: Icon, end }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={end}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                    isActive
-                      ? 'bg-indigo-50 text-indigo-700'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                  }`
-                }
-              >
-                <Icon size={18} />
-                {label}
-              </NavLink>
-            ))}
+            {section.items.map((item) =>
+              item.children ? (
+                <SidebarParentItem key={item.label} item={item} />
+              ) : (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={navLinkClasses}
+                >
+                  <item.icon size={18} />
+                  {item.label}
+                </NavLink>
+              )
+            )}
           </div>
         ))}
       </nav>
