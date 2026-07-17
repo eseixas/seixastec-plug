@@ -6,7 +6,41 @@ const prisma = new PrismaClient();
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
+// Cadastros fiscais granulares — idempotentes (upsert), rodam SEMPRE, mesmo
+// num banco já povoado, para que a introdução do módulo os semeie retroativa.
+async function seedConfiguracoesFiscais() {
+  // Séries padrão por modelo, a partir dos valores atuais do singleton (ou 1).
+  const cfg = await prisma.configuracaoFiscal.findUnique({ where: { id: 'singleton' } });
+  const serieNfce = cfg?.serieNfce ?? 1;
+  const serieNfe = cfg?.serieNfe ?? 1;
+  await prisma.serieNotaFiscal.upsert({
+    where: { modelo_serie: { modelo: '65', serie: serieNfce } },
+    update: {},
+    create: { modelo: '65', serie: serieNfce, descricao: 'NFC-e padrão', padrao: true },
+  });
+  await prisma.serieNotaFiscal.upsert({
+    where: { modelo_serie: { modelo: '55', serie: serieNfe } },
+    update: {},
+    create: { modelo: '55', serie: serieNfe, descricao: 'NF-e padrão', padrao: true },
+  });
+
+  // Natureza de operação padrão. Sem unique em `descricao`: busca antes de criar.
+  const natPadrao = await prisma.naturezaOperacao.findFirst({ where: { descricao: 'Venda ao consumidor' } });
+  if (!natPadrao) {
+    await prisma.naturezaOperacao.create({ data: { descricao: 'Venda ao consumidor', cfop: '5102', padrao: true } });
+  }
+
+  // Grupo de tributação padrão do Simples Nacional.
+  await prisma.grupoTributacao.upsert({
+    where: { nome: 'Padrão Simples Nacional' },
+    update: {},
+    create: { nome: 'Padrão Simples Nacional', origemMercadoria: '0', csosn: '102', cfop: '5102' },
+  });
+}
+
 async function main() {
+  await seedConfiguracoesFiscais();
+
   const jaExiste = await prisma.user.count();
   if (jaExiste > 0) {
     console.log('Seed ignorado (banco já possui dados).');
@@ -71,6 +105,35 @@ async function main() {
       { nome: 'Rosa', hex: '#ec4899', ordem: 6 },
       { nome: 'Verde', hex: '#16a34a', ordem: 7 },
       { nome: 'Vermelho', hex: '#dc2626', ordem: 8 },
+    ],
+  });
+
+  // Modelos de etiqueta (Pimaco + térmicas). Dimensões em mm.
+  // Linhas de conteúdo: nome do produto, código (referência/SKU — que na
+  // convenção de SKU deste ERP já carrega tamanho/cor) e valor. O enum de campos
+  // não tem um campo dedicado a cor/tamanho, por isso usamos PRODUCT_CODE no
+  // lugar de uma linha de TEXT estática (que renderizaria vazia).
+  const linhasPadrao = [{ campo: 'PRODUCT_NAME' }, { campo: 'PRODUCT_CODE' }, { campo: 'PRODUCT_VALUE' }];
+  const comumFolha = {
+    espacoSuperior: 2, espacoInferior: 2, espacoEsquerda: 2, espacoDireita: 2,
+    linhasConteudo: linhasPadrao, fonteTipo: 'Helvetica', fonteTamanho: 7,
+    alinhamento: 'C', imagemLeituraTipo: 'BARCODE',
+  };
+  // Carta (215,90 x 279,40) e A4 (210 x 297) são os dois tamanhos base da Pimaco.
+  await prisma.modeloEtiqueta.createMany({
+    data: [
+      { nome: 'Pimaco 6081/6181/6281/62581', codigo: 'PIM-6081', folhaLargura: 215.90, folhaAltura: 279.40, margemEsquerda: 4.70, margemTopo: 12.70, colunas: 2, espacamentoColunas: 3.00, linhasFolha: 10, espacamentoLinhas: 0.00, etiquetaLargura: 101.60, etiquetaAltura: 25.40, ...comumFolha },
+      { nome: 'Pimaco A4062/A4262/A4362', codigo: 'PIM-A4062', folhaLargura: 210.00, folhaAltura: 297.00, margemEsquerda: 4.50, margemTopo: 12.90, colunas: 2, espacamentoColunas: 2.50, linhasFolha: 8, espacamentoLinhas: 0.00, etiquetaLargura: 99.00, etiquetaAltura: 33.90, ...comumFolha },
+      { nome: 'Pimaco A4060/A4260/A4360', codigo: 'PIM-A4060', folhaLargura: 210.00, folhaAltura: 297.00, margemEsquerda: 7.20, margemTopo: 15.15, colunas: 3, espacamentoColunas: 2.50, linhasFolha: 7, espacamentoLinhas: 0.00, etiquetaLargura: 63.50, etiquetaAltura: 38.10, ...comumFolha },
+      { nome: 'Pimaco 6087/6187/6287', codigo: 'PIM-6087', folhaLargura: 215.90, folhaAltura: 279.40, margemEsquerda: 6.35, margemTopo: 12.70, colunas: 4, espacamentoColunas: 2.50, linhasFolha: 20, espacamentoLinhas: 0.00, etiquetaLargura: 44.40, etiquetaAltura: 12.70, ...comumFolha, fonteTamanho: 5, imagemLeituraTipo: 'NENHUMA' },
+      { nome: 'Pimaco A4056', codigo: 'PIM-A4056', folhaLargura: 210.00, folhaAltura: 297.00, margemEsquerda: 4.50, margemTopo: 10.70, colunas: 2, espacamentoColunas: 2.50, linhasFolha: 7, espacamentoLinhas: 0.00, etiquetaLargura: 84.70, etiquetaAltura: 38.10, ...comumFolha },
+      { nome: 'Pimaco 6080', codigo: 'PIM-6080', folhaLargura: 215.90, folhaAltura: 279.40, margemEsquerda: 4.70, margemTopo: 12.70, colunas: 3, espacamentoColunas: 3.00, linhasFolha: 10, espacamentoLinhas: 0.00, etiquetaLargura: 66.70, etiquetaAltura: 25.40, ...comumFolha },
+      { nome: 'Pimaco A4348', codigo: 'PIM-A4348', folhaLargura: 210.00, folhaAltura: 297.00, margemEsquerda: 8.00, margemTopo: 21.50, colunas: 3, espacamentoColunas: 3.00, linhasFolha: 8, espacamentoLinhas: 0.00, etiquetaLargura: 63.50, etiquetaAltura: 31.00, ...comumFolha },
+      { nome: 'Pimaco 6180', codigo: 'PIM-6180', folhaLargura: 215.90, folhaAltura: 279.40, margemEsquerda: 4.70, margemTopo: 12.70, colunas: 3, espacamentoColunas: 3.00, linhasFolha: 10, espacamentoLinhas: 0.00, etiquetaLargura: 66.70, etiquetaAltura: 25.40, ...comumFolha },
+      { nome: 'Pimaco A4250', codigo: 'PIM-A4250', folhaLargura: 210.00, folhaAltura: 297.00, margemEsquerda: 4.50, margemTopo: 21.20, colunas: 2, espacamentoColunas: 2.50, linhasFolha: 10, espacamentoLinhas: 0.00, etiquetaLargura: 96.00, etiquetaAltura: 25.40, ...comumFolha },
+      { nome: 'Pimaco A4351', codigo: 'PIM-A4351', folhaLargura: 210.00, folhaAltura: 297.00, margemEsquerda: 6.00, margemTopo: 15.90, colunas: 3, espacamentoColunas: 2.50, linhasFolha: 11, espacamentoLinhas: 0.00, etiquetaLargura: 63.50, etiquetaAltura: 25.40, ...comumFolha },
+      { nome: 'Térmica 50x30mm', codigo: 'TERM-50x30', folhaLargura: 50.00, folhaAltura: 30.00, margemEsquerda: 0.00, margemTopo: 0.00, colunas: 1, espacamentoColunas: 0.00, linhasFolha: 1, espacamentoLinhas: 0.00, etiquetaLargura: 50.00, etiquetaAltura: 30.00, ...comumFolha },
+      { nome: 'Térmica 40x25mm', codigo: 'TERM-40x25', folhaLargura: 40.00, folhaAltura: 25.00, margemEsquerda: 0.00, margemTopo: 0.00, colunas: 1, espacamentoColunas: 0.00, linhasFolha: 1, espacamentoLinhas: 0.00, etiquetaLargura: 40.00, etiquetaAltura: 25.00, ...comumFolha, fonteTamanho: 6 },
     ],
   });
 

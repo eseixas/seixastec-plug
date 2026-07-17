@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { prisma } from '../lib/prisma.js';
 import { UPLOAD_DIR } from '../routes/produtos.routes.js';
+import { CERTS_DIR } from '../routes/empresa.routes.js';
+import { encrypt } from '../lib/cryptoSenha.js';
+import { sincronizarConfigCertificado } from '../fiscal/certificado.js';
 import { aplicarMovimento } from './estoque.js';
 import {
   CENTRAL_URL,
@@ -22,9 +25,17 @@ const DELEGATE = {
   escalaTamanho: 'escalaTamanho',
   cor: 'cor',
   configuracaoFiscal: 'configuracaoFiscal',
+  configuracaoEmpresa: 'configuracaoEmpresa',
+  configuracaoPdv: 'configuracaoPdv',
+  configuracaoCliente: 'configuracaoCliente',
+  modeloEtiqueta: 'modeloEtiqueta',
+  serieNotaFiscal: 'serieNotaFiscal',
+  naturezaOperacao: 'naturezaOperacao',
   adquirente: 'adquirente',
   taxaAdquirente: 'taxaAdquirente',
   fornecedor: 'fornecedor',
+  // grupoTributacao antes de produto (produto referencia o grupo).
+  grupoTributacao: 'grupoTributacao',
   produto: 'produto',
   variacao: 'variacao',
   cliente: 'cliente',
@@ -51,7 +62,8 @@ async function salvarCursor(entidade, cursorISO) {
   });
 }
 
-// Baixa a foto do produto da central para o volume local, se ainda não existir.
+// Baixa a foto do produto (ou o logotipo da empresa) da central para o
+// volume local, se ainda não existir.
 async function baixarFotoSePreciso(fotoUrl) {
   if (!fotoUrl) return;
   const nome = path.basename(fotoUrl);
@@ -62,6 +74,49 @@ async function baixarFotoSePreciso(fotoUrl) {
     if (!r.ok) return;
     const buf = Buffer.from(await r.arrayBuffer());
     await fs.promises.writeFile(destino, buf);
+  } catch {
+    /* tenta de novo no próximo ciclo */
+  }
+}
+
+// Baixa o certificado A1 (arquivo .pfx + senha em claro, via canal
+// autenticado por x-edge-token) da central e persiste local: o arquivo em
+// CERTS_DIR e a senha RECRIPTOGRAFADA com a chave própria deste edge — nunca
+// reaproveitamos ConfiguracaoEmpresa.certificadoSenha vindo do pull genérico
+// porque foi criptografado com o JWT_SECRET da central, que pode divergir do
+// JWT_SECRET deste edge (docker-compose.central.yml e docker-compose.edge.yml
+// leem ${JWT_SECRET} de arquivos .env distintos).
+async function baixarCertificadoSePreciso(cfgCentral) {
+  try {
+    const r = await fetch(`${CENTRAL_URL}/api/sync/certificado`, { headers: { 'x-edge-token': EDGE_SYNC_TOKEN } });
+    if (r.status === 404) return; // central não tem certificado configurado
+    if (!r.ok) return;
+
+    const senha = decodeURIComponent(r.headers.get('x-certificado-senha') || '');
+    const nome = decodeURIComponent(r.headers.get('x-certificado-nome') || 'certificado.pfx');
+    const buf = Buffer.from(await r.arrayBuffer());
+
+    await fs.promises.mkdir(CERTS_DIR, { recursive: true });
+    const destino = path.join(CERTS_DIR, 'certificado.pfx');
+    await fs.promises.writeFile(destino, buf);
+
+    await prisma.configuracaoEmpresa.upsert({
+      where: { id: 'singleton' },
+      update: {
+        certificadoArquivo: destino,
+        certificadoNome: nome,
+        certificadoSenha: senha ? encrypt(senha) : null,
+        certificadoValidade: cfgCentral.certificadoValidade || null,
+      },
+      create: {
+        id: 'singleton',
+        certificadoArquivo: destino,
+        certificadoNome: nome,
+        certificadoSenha: senha ? encrypt(senha) : null,
+        certificadoValidade: cfgCentral.certificadoValidade || null,
+      },
+    });
+    await sincronizarConfigCertificado(); // aponta fiscal/certificado.js para o arquivo/senha novos
   } catch {
     /* tenta de novo no próximo ciclo */
   }
@@ -95,6 +150,13 @@ async function pull() {
         await prisma[delegate].upsert({ where: { id: data.id }, update: data, create: data });
       }
       if (nome === 'produto' && data.fotoUrl) await baixarFotoSePreciso(data.fotoUrl);
+      if (nome === 'configuracaoEmpresa') {
+        if (data.logoUrl) await baixarFotoSePreciso(data.logoUrl);
+        // O pull genérico não traz certificadoArquivo/certificadoSenha (ver
+        // sync.routes.js) — sempre que a linha mudou, busca o certificado
+        // pelo endpoint dedicado.
+        await baixarCertificadoSePreciso(data);
+      }
     }
     await salvarCursor(nome, bloco.cursor);
   }

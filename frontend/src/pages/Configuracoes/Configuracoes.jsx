@@ -14,8 +14,13 @@ import {
   Ruler,
   Palette,
   Landmark,
+  ImageIcon,
+  ShieldCheck,
+  Upload,
+  Settings as SettingsIcon,
+  Users,
 } from 'lucide-react'
-import { api, uploadFile } from '../../lib/api.js'
+import { api, uploadFile, uploadWithFields, fotoSrc } from '../../lib/api.js'
 import { formatDateTime } from '../../lib/format.js'
 import {
   Button,
@@ -104,6 +109,28 @@ const EMPTY_CATEGORIA_FORM = {
 const EMPTY_MARCA_FORM = {
   nome: '',
   ativo: true,
+}
+
+const EMPTY_PDV_FORM = {
+  exigirGerenteCancelamento: false,
+  exigirGerenteDesconto: false,
+  descontoHabilitado: true,
+  descontoMaximoPercentual: '',
+  bloquearVendaSemEstoque: false,
+  exigirAprovacaoFechamento: false,
+}
+
+const CAMPOS_CLIENTE = [
+  { value: 'cpfCnpj', label: 'CPF/CNPJ' },
+  { value: 'email', label: 'E-mail' },
+  { value: 'telefone', label: 'Telefone' },
+  { value: 'endereco', label: 'Endereço (CEP, logradouro, número, cidade, UF)' },
+]
+
+const EMPTY_CLIENTE_CFG_FORM = {
+  camposObrigatoriosPF: [],
+  camposObrigatoriosPJ: [],
+  aplicarNoPdv: true,
 }
 
 function CategoriasPanel() {
@@ -837,6 +864,241 @@ function ApiKeysPanel() {
           </div>
         </div>
       </Modal>
+    </Card>
+  )
+}
+
+function EmpresaLogoPanel() {
+  const toast = useToast()
+  const queryClient = useQueryClient()
+  const fileInputRef = useRef(null)
+
+  const { data: empresa, isLoading } = useQuery({
+    queryKey: ['empresa'],
+    queryFn: () => api.get('/empresa'),
+  })
+
+  const uploadMutation = useMutation({
+    mutationFn: (file) => uploadWithFields('/empresa/logo', 'logo', file, {}, { method: 'PUT' }),
+    onSuccess: () => {
+      toast.success('Logotipo atualizado com sucesso.')
+      queryClient.invalidateQueries({ queryKey: ['empresa'] })
+    },
+    onError: (err) => toast.error(err?.message || 'Erro ao enviar o logotipo.'),
+  })
+
+  const removeMutation = useMutation({
+    mutationFn: () => api.delete('/empresa/logo'),
+    onSuccess: () => {
+      toast.success('Logotipo removido.')
+      queryClient.invalidateQueries({ queryKey: ['empresa'] })
+    },
+    onError: (err) => toast.error(err?.message || 'Erro ao remover o logotipo.'),
+  })
+
+  function handleFileChange(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    uploadMutation.mutate(file)
+    e.target.value = ''
+  }
+
+  return (
+    <Card
+      title="Logotipo"
+      action={
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <Button
+            icon={Upload}
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            loading={uploadMutation.isPending}
+          >
+            {empresa?.logoUrl ? 'Trocar logotipo' : 'Enviar logotipo'}
+          </Button>
+        </>
+      }
+    >
+      <p className="mb-4 text-xs text-gray-500">
+        O logotipo aparece em documentos e telas do sistema (ex.: etiquetas e comprovantes).
+      </p>
+      {isLoading ? (
+        <Spinner />
+      ) : empresa?.logoUrl ? (
+        <div className="flex items-center gap-4">
+          <img
+            src={fotoSrc(empresa.logoUrl)}
+            alt="Logotipo da empresa"
+            className="h-24 w-24 rounded-lg border border-gray-200 bg-white object-contain p-1"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={Trash2}
+            className="text-red-600 hover:bg-red-50"
+            onClick={() => removeMutation.mutate()}
+            loading={removeMutation.isPending}
+          >
+            Remover
+          </Button>
+        </div>
+      ) : (
+        <EmptyState
+          icon={ImageIcon}
+          title="Nenhum logotipo enviado"
+          description="Envie uma imagem (PNG/JPG) com o logotipo da empresa."
+        />
+      )}
+    </Card>
+  )
+}
+
+function EmpresaCertificadoPanel() {
+  const toast = useToast()
+  const queryClient = useQueryClient()
+  const fileInputRef = useRef(null)
+  const [arquivo, setArquivo] = useState(null)
+  const [senha, setSenha] = useState('')
+
+  const { data: empresa, isLoading } = useQuery({
+    queryKey: ['empresa'],
+    queryFn: () => api.get('/empresa'),
+  })
+
+  const uploadMutation = useMutation({
+    mutationFn: ({ file, senha }) =>
+      uploadWithFields('/empresa/certificado', 'certificado', file, senha ? { senha } : {}, { method: 'PUT' }),
+    onSuccess: () => {
+      toast.success('Certificado digital salvo com sucesso.')
+      queryClient.invalidateQueries({ queryKey: ['empresa'] })
+      setArquivo(null)
+      setSenha('')
+    },
+    onError: (err) => toast.error(err?.message || 'Erro ao enviar o certificado.'),
+  })
+
+  const senhaMutation = useMutation({
+    mutationFn: (senha) => api.put('/empresa/certificado/senha', { senha }),
+    onSuccess: () => {
+      toast.success('Senha do certificado atualizada.')
+      queryClient.invalidateQueries({ queryKey: ['empresa'] })
+      setSenha('')
+    },
+    onError: (err) => toast.error(err?.message || 'Erro ao salvar a senha.'),
+  })
+
+  const removeMutation = useMutation({
+    mutationFn: () => api.delete('/empresa/certificado'),
+    onSuccess: () => {
+      toast.success('Certificado removido.')
+      queryClient.invalidateQueries({ queryKey: ['empresa'] })
+    },
+    onError: (err) => toast.error(err?.message || 'Erro ao remover o certificado.'),
+  })
+
+  function handleSalvar() {
+    if (arquivo) {
+      uploadMutation.mutate({ file: arquivo, senha: senha.trim() || undefined })
+    } else if (senha.trim()) {
+      if (!empresa?.temCertificado) {
+        toast.error('Envie o arquivo do certificado (.pfx/.p12) junto com a senha.')
+        return
+      }
+      senhaMutation.mutate(senha.trim())
+    } else {
+      toast.error('Selecione o arquivo .pfx/.p12 e informe a senha.')
+    }
+  }
+
+  const isSaving = uploadMutation.isPending || senhaMutation.isPending
+
+  return (
+    <Card title="Certificado Digital A1">
+      <p className="mb-4 text-xs text-gray-500">
+        O certificado A1 (.pfx/.p12) é usado na emissão de NFC-e/NF-e e desce automaticamente
+        para o servidor da loja pela sincronização. A senha é armazenada criptografada e usada
+        apenas na emissão de notas fiscais — ela nunca é exibida novamente.
+      </p>
+
+      {isLoading ? (
+        <Spinner />
+      ) : (
+        <div className="space-y-4">
+          {empresa?.temCertificado ? (
+            <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={16} />
+                <span>
+                  Certificado enviado: <strong>{empresa.certificadoNome || 'certificado.pfx'}</strong>
+                  {empresa.certificadoValidade && (
+                    <> — válido até <strong>{formatDateTime(empresa.certificadoValidade)}</strong></>
+                  )}
+                </span>
+              </div>
+              {!empresa.temSenha && (
+                <p className="mt-1 text-xs text-amber-700">
+                  A senha ainda não foi informada — informe abaixo para habilitar a emissão.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
+              Nenhum certificado enviado.
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Arquivo do certificado (.pfx/.p12)
+              </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pfx,.p12"
+                onChange={(e) => setArquivo(e.target.files?.[0] || null)}
+                className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
+              />
+            </div>
+            <Input
+              label="Senha do certificado"
+              type="password"
+              value={senha}
+              onChange={(e) => setSenha(e.target.value)}
+              placeholder={empresa?.temSenha ? 'Senha já cadastrada (preencha para trocar)' : 'Senha do .pfx'}
+              autoComplete="new-password"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button onClick={handleSalvar} loading={isSaving}>
+              Salvar
+            </Button>
+            {empresa?.temCertificado && (
+              <Button
+                variant="ghost"
+                icon={Trash2}
+                className="text-red-600 hover:bg-red-50"
+                onClick={() => {
+                  if (window.confirm('Remover o certificado digital? A emissão de notas ficará indisponível.')) {
+                    removeMutation.mutate()
+                  }
+                }}
+                loading={removeMutation.isPending}
+              >
+                Remover certificado
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </Card>
   )
 }
@@ -1594,13 +1856,286 @@ function CoresPanel() {
   )
 }
 
+function ConfiguracoesPdvPanel() {
+  const toast = useToast()
+  const queryClient = useQueryClient()
+
+  const [form, setForm] = useState(EMPTY_PDV_FORM)
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['config-pdv'],
+    queryFn: () => api.get('/config/pdv'),
+  })
+
+  useEffect(() => {
+    if (data) {
+      setForm({
+        exigirGerenteCancelamento: data.exigirGerenteCancelamento ?? false,
+        exigirGerenteDesconto: data.exigirGerenteDesconto ?? false,
+        descontoHabilitado: data.descontoHabilitado ?? true,
+        descontoMaximoPercentual: data.descontoMaximoPercentual ?? '',
+        bloquearVendaSemEstoque: data.bloquearVendaSemEstoque ?? false,
+        exigirAprovacaoFechamento: data.exigirAprovacaoFechamento ?? false,
+      })
+    }
+  }, [data])
+
+  const updateMutation = useMutation({
+    mutationFn: (payload) => api.put('/config/pdv', payload),
+    onSuccess: () => {
+      toast.success('Configurações do PDV atualizadas com sucesso.')
+      queryClient.invalidateQueries({ queryKey: ['config-pdv'] })
+    },
+    onError: (err) => toast.error(err?.message || 'Erro ao salvar configurações do PDV.'),
+  })
+
+  function handleChange(field, value) {
+    setForm((prev) => ({ ...prev, [field]: value }))
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    const payload = {
+      exigirGerenteCancelamento: form.exigirGerenteCancelamento,
+      exigirGerenteDesconto: form.exigirGerenteDesconto,
+      descontoHabilitado: form.descontoHabilitado,
+      descontoMaximoPercentual:
+        form.descontoMaximoPercentual === '' ? null : Number(form.descontoMaximoPercentual),
+      bloquearVendaSemEstoque: form.bloquearVendaSemEstoque,
+      exigirAprovacaoFechamento: form.exigirAprovacaoFechamento,
+    }
+    updateMutation.mutate(payload)
+  }
+
+  return (
+    <Card
+      title="PDV"
+      action={
+        <Button onClick={handleSubmit} loading={updateMutation.isPending}>
+          Salvar
+        </Button>
+      }
+    >
+      <p className="mb-4 text-xs text-gray-500">
+        Regras de comportamento aplicadas no ponto de venda: aprovação de gerente, desconto e
+        bloqueio de venda sem estoque.
+      </p>
+
+      {isLoading ? (
+        <Spinner />
+      ) : isError ? (
+        <EmptyState
+          icon={SettingsIcon}
+          title="Erro ao carregar configurações do PDV"
+          description="Não foi possível carregar as configurações. Tente novamente."
+        />
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={form.exigirGerenteCancelamento}
+              onChange={(e) => handleChange('exigirGerenteCancelamento', e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            Cancelar venda exige credencial de gerente
+          </label>
+
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={form.exigirAprovacaoFechamento}
+              onChange={(e) => handleChange('exigirAprovacaoFechamento', e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            Fechamento de caixa exige credencial de gerente
+          </label>
+
+          <div className="rounded-lg border border-gray-200 p-3 space-y-3">
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={form.descontoHabilitado}
+                onChange={(e) => handleChange('descontoHabilitado', e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              Desconto habilitado no PDV
+            </label>
+
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={form.exigirGerenteDesconto}
+                onChange={(e) => handleChange('exigirGerenteDesconto', e.target.checked)}
+                disabled={!form.descontoHabilitado}
+                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              Aplicar desconto exige credencial de gerente
+            </label>
+
+            <Input
+              label="Desconto máximo (%)"
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              disabled={!form.descontoHabilitado}
+              value={form.descontoMaximoPercentual}
+              onChange={(e) => handleChange('descontoMaximoPercentual', e.target.value)}
+              placeholder="Vazio = sem limite"
+            />
+          </div>
+
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={form.bloquearVendaSemEstoque}
+              onChange={(e) => handleChange('bloquearVendaSemEstoque', e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            Bloquear finalização de venda com estoque zerado/negativo
+          </label>
+        </form>
+      )}
+    </Card>
+  )
+}
+
+function ConfiguracoesClientePanel() {
+  const toast = useToast()
+  const queryClient = useQueryClient()
+
+  const [form, setForm] = useState(EMPTY_CLIENTE_CFG_FORM)
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['config-cliente'],
+    queryFn: () => api.get('/config/cliente'),
+  })
+
+  useEffect(() => {
+    if (data) {
+      setForm({
+        camposObrigatoriosPF: data.camposObrigatoriosPF || [],
+        camposObrigatoriosPJ: data.camposObrigatoriosPJ || [],
+        aplicarNoPdv: data.aplicarNoPdv ?? true,
+      })
+    }
+  }, [data])
+
+  const updateMutation = useMutation({
+    mutationFn: (payload) => api.put('/config/cliente', payload),
+    onSuccess: () => {
+      toast.success('Configurações de cadastro de clientes atualizadas com sucesso.')
+      queryClient.invalidateQueries({ queryKey: ['config-cliente'] })
+    },
+    onError: (err) => toast.error(err?.message || 'Erro ao salvar configurações de clientes.'),
+  })
+
+  function toggleCampo(grupo, campo) {
+    setForm((prev) => {
+      const atual = prev[grupo]
+      const novo = atual.includes(campo) ? atual.filter((c) => c !== campo) : [...atual, campo]
+      return { ...prev, [grupo]: novo }
+    })
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    updateMutation.mutate(form)
+  }
+
+  return (
+    <Card
+      title="Cadastro de Clientes"
+      action={
+        <Button onClick={handleSubmit} loading={updateMutation.isPending}>
+          Salvar
+        </Button>
+      }
+    >
+      <p className="mb-4 text-xs text-gray-500">
+        Define quais campos são obrigatórios no cadastro de cliente (nome é sempre obrigatório),
+        separadamente para Pessoa Física e Pessoa Jurídica (identificadas pelo tamanho do
+        CPF/CNPJ preenchido).
+      </p>
+
+      {isLoading ? (
+        <Spinner />
+      ) : isError ? (
+        <EmptyState
+          icon={Users}
+          title="Erro ao carregar configurações de clientes"
+          description="Não foi possível carregar as configurações. Tente novamente."
+        />
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Pessoa Física
+              </h3>
+              <div className="space-y-2">
+                {CAMPOS_CLIENTE.map((c) => (
+                  <label key={c.value} className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.camposObrigatoriosPF.includes(c.value)}
+                      onChange={() => toggleCampo('camposObrigatoriosPF', c.value)}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Pessoa Jurídica
+              </h3>
+              <div className="space-y-2">
+                {CAMPOS_CLIENTE.map((c) => (
+                  <label key={c.value} className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={form.camposObrigatoriosPJ.includes(c.value)}
+                      onChange={() => toggleCampo('camposObrigatoriosPJ', c.value)}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm text-gray-700 border-t pt-4">
+            <input
+              type="checkbox"
+              checked={form.aplicarNoPdv}
+              onChange={(e) => setForm((prev) => ({ ...prev, aplicarNoPdv: e.target.checked }))}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            Aplicar também no cadastro feito pelo PDV
+          </label>
+        </form>
+      )}
+    </Card>
+  )
+}
+
 export default function Configuracoes() {
   return (
     <div>
       <PageHeader
         title="Configurações"
-        subtitle="Gerencie categorias, marcas, escalas de tamanho, cores, configurações fiscais e chaves de API"
+        subtitle="Gerencie dados da empresa, categorias, marcas, escalas de tamanho, cores, configurações fiscais e chaves de API"
       />
+
+      <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <EmpresaLogoPanel />
+        <EmpresaCertificadoPanel />
+      </div>
 
       <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <CategoriasPanel />
@@ -1618,6 +2153,11 @@ export default function Configuracoes() {
 
       <div className="mb-6">
         <CertificadoFiscalPanel />
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <ConfiguracoesPdvPanel />
+        <ConfiguracoesClientePanel />
       </div>
 
       <ApiKeysPanel />

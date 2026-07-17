@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import fs from 'fs';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { edgeAuthRequired } from '../middleware/auth.js';
 import { aplicarEventoPush } from '../sync/apply.js';
+import { decrypt } from '../lib/cryptoSenha.js';
 
 // Rotas de sincronização, ATIVAS SOMENTE NA CENTRAL. O edge é cliente destas.
 const router = Router();
@@ -19,9 +21,17 @@ const ENTIDADES_PULL = [
   { nome: 'escalaTamanho', delegate: 'escalaTamanho', cursor: 'updatedAt' },
   { nome: 'cor', delegate: 'cor', cursor: 'updatedAt' },
   { nome: 'configuracaoFiscal', delegate: 'configuracaoFiscal', cursor: 'updatedAt' },
+  { nome: 'configuracaoEmpresa', delegate: 'configuracaoEmpresa', cursor: 'updatedAt' },
+  { nome: 'configuracaoPdv', delegate: 'configuracaoPdv', cursor: 'updatedAt' },
+  { nome: 'configuracaoCliente', delegate: 'configuracaoCliente', cursor: 'updatedAt' },
+  { nome: 'modeloEtiqueta', delegate: 'modeloEtiqueta', cursor: 'updatedAt' },
+  { nome: 'serieNotaFiscal', delegate: 'serieNotaFiscal', cursor: 'updatedAt' },
+  { nome: 'naturezaOperacao', delegate: 'naturezaOperacao', cursor: 'updatedAt' },
   { nome: 'adquirente', delegate: 'adquirente', cursor: 'updatedAt' },
   { nome: 'taxaAdquirente', delegate: 'taxaAdquirente', cursor: 'updatedAt' },
   { nome: 'fornecedor', delegate: 'fornecedor', cursor: 'updatedAt' },
+  // grupoTributacao ANTES de produto: produto referencia o grupo.
+  { nome: 'grupoTributacao', delegate: 'grupoTributacao', cursor: 'updatedAt' },
   { nome: 'produto', delegate: 'produto', cursor: 'updatedAt' },
   { nome: 'variacao', delegate: 'variacao', cursor: 'updatedAt' },
   { nome: 'cliente', delegate: 'cliente', cursor: 'updatedAt' },
@@ -44,11 +54,19 @@ router.get('/pull', asyncHandler(async (req, res) => {
   for (const ent of ENTIDADES_PULL) {
     const desde = cursors[ent.nome] ? new Date(cursors[ent.nome]) : null;
     const where = desde ? { [ent.cursor]: { gt: desde } } : {};
-    const rows = await prisma[ent.delegate].findMany({
+    let rows = await prisma[ent.delegate].findMany({
       where,
       orderBy: { [ent.cursor]: 'asc' },
       take: PAGE,
     });
+    // ConfiguracaoEmpresa: o caminho do certificado é local à central e a
+    // senha vem criptografada com a chave da central (pode divergir da chave
+    // do edge — JWT_SECRET não é garantidamente igual nos dois lados). Ambos
+    // descem por um endpoint dedicado (GET /api/sync/certificado) em vez do
+    // pull genérico — ver worker.js do edge.
+    if (ent.nome === 'configuracaoEmpresa') {
+      rows = rows.map(({ certificadoArquivo, certificadoSenha, ...resto }) => resto);
+    }
     const maxCursor = rows.length ? rows[rows.length - 1][ent.cursor] : null;
     resultado[ent.nome] = { rows, cursor: maxCursor };
   }
@@ -99,6 +117,25 @@ router.post('/push', asyncHandler(async (req, res) => {
   }).catch(() => {});
 
   res.json({ acked, falhas });
+}));
+
+// Entrega o arquivo .pfx + a senha do certificado (DESCRIPTOGRAFADA aqui,
+// via TLS/rede interna da central para o edge) para o worker do edge baixar
+// e recriptografar com a SUA própria chave local. Não reaproveitamos a senha
+// criptografada com a chave da central porque JWT_SECRET não é garantido ser
+// o mesmo em docker-compose.central.yml e docker-compose.edge.yml — cada um
+// lê de ${JWT_SECRET} do seu próprio .env, que podem divergir.
+router.get('/certificado', asyncHandler(async (req, res) => {
+  const cfg = await prisma.configuracaoEmpresa.findUnique({ where: { id: 'singleton' } });
+  if (!cfg?.certificadoArquivo || !fs.existsSync(cfg.certificadoArquivo)) {
+    return res.status(404).json({ erro: 'Nenhum certificado configurado na central.' });
+  }
+  const senha = decrypt(cfg.certificadoSenha);
+  res.setHeader('x-certificado-nome', encodeURIComponent(cfg.certificadoNome || 'certificado.pfx'));
+  res.setHeader('x-certificado-senha', senha ? encodeURIComponent(senha) : '');
+  res.setHeader('x-certificado-updated-at', cfg.updatedAt.toISOString());
+  res.setHeader('Content-Type', 'application/x-pkcs12');
+  fs.createReadStream(cfg.certificadoArquivo).pipe(res);
 }));
 
 // Handshake opcional: o edge se apresenta (útil para diagnóstico).

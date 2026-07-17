@@ -153,6 +153,123 @@ model ConfiguracaoFiscal {
   updatedAt        DateTime @updatedAt
 }
 
+// Grupo reutilizável de tributação (Simples Nacional). Equivale aos "Grupo do
+// ICMS" + "Grupo do PIS/COFINS" das Configurações Fiscais do ConnectPlug,
+// unificados num só cadastro. Um Produto pode apontar para um grupo em vez de
+// repetir os campos fiscais; a precedência na emissão é: campo explícito do
+// produto > grupo do produto > ConfiguracaoFiscal (ver resolverTributacaoProduto).
+model GrupoTributacao {
+  id               String   @id @default(uuid())
+  nome             String   @unique
+  origemMercadoria String   @default("0")
+  csosn            String   @default("102")
+  cfop             String   @default("5102")
+  ncm              String?
+  cest             String?
+  ativo            Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  produtos Produto[]
+}
+
+// Séries de numeração por modelo (65 = NFC-e, 55 = NF-e). Substitui os campos
+// serieNfce/serieNfe do singleton por múltiplas séries com uma padrão por modelo.
+// A emissão usa a série padrão ativa do modelo, com fallback ao singleton.
+model SerieNotaFiscal {
+  id        String   @id @default(uuid())
+  modelo    String // "65" | "55"
+  serie     Int
+  descricao String?
+  padrao    Boolean  @default(false)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([modelo, serie])
+}
+
+// Natureza de operação (CFOP + descrição usados no cabeçalho natOp da NF).
+model NaturezaOperacao {
+  id        String   @id @default(uuid())
+  descricao String
+  cfop      String
+  padrao    Boolean  @default(false)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Dados da empresa (linha única): logotipo exibido no admin/PDV/DANFCE e o
+// certificado digital A1 usado para assinar NFC-e/NF-e. A senha do
+// certificado é criptografada em repouso (AES-256-GCM, chave derivada do
+// JWT_SECRET — ver backend/src/lib/cryptoSenha.js) e NUNCA é retornada pela
+// API. O arquivo .pfx fica em disco fora do diretório servido por /uploads.
+model ConfiguracaoEmpresa {
+  id                  String    @id @default("singleton")
+  logoUrl             String? // caminho servido em /uploads, igual Produto.fotoUrl
+  certificadoArquivo  String? // caminho absoluto do .pfx no disco (NÃO público)
+  certificadoNome     String? // nome original do arquivo enviado, só para exibição
+  certificadoSenha    String? // senha do .pfx, criptografada (AES-256-GCM)
+  certificadoValidade DateTime? // extraída do certificado no upload, se possível
+  updatedAt           DateTime  @updatedAt
+}
+
+// Comportamento do PDV (linha única): regras de aprovação de gerente,
+// desconto e bloqueio de venda sem estoque, aplicadas no backend (enforcement)
+// e refletidas no app de PDV.
+model ConfiguracaoPdv {
+  id                         String   @id @default("singleton")
+  exigirGerenteCancelamento  Boolean  @default(false)
+  exigirGerenteDesconto      Boolean  @default(false)
+  descontoHabilitado         Boolean  @default(true)
+  descontoMaximoPercentual   Decimal? @db.Decimal(5, 2) // null = sem limite
+  bloquearVendaSemEstoque    Boolean  @default(false)
+  exigirAprovacaoFechamento  Boolean  @default(false)
+  updatedAt                  DateTime @updatedAt
+}
+
+// Campos obrigatórios configuráveis no cadastro de cliente (linha única).
+// PF/PJ são distinguidos pelo tamanho do cpfCnpj (11 vs 14 dígitos) — a
+// distinção só se aplica quando cpfCnpj está preenchido; vazio usa a lista PF.
+model ConfiguracaoCliente {
+  id                 String   @id @default("singleton")
+  camposObrigatoriosPF String[]
+  camposObrigatoriosPJ String[]
+  aplicarNoPdv       Boolean  @default(true)
+  updatedAt          DateTime @updatedAt
+}
+
+// Modelo de etiqueta customizável (formato PDF, impresso em qualquer impressora
+// com driver). Substitui os dois formatos hardcoded (térmica/A4). Dimensões em mm.
+model ModeloEtiqueta {
+  id                 String   @id @default(uuid())
+  nome               String
+  codigo             String   @unique
+  folhaLargura       Decimal  @db.Decimal(6, 2)
+  folhaAltura        Decimal  @db.Decimal(6, 2)
+  margemEsquerda     Decimal  @default(0) @db.Decimal(6, 2)
+  margemTopo         Decimal  @default(0) @db.Decimal(6, 2)
+  colunas            Int      @default(1)
+  espacamentoColunas Decimal  @default(0) @db.Decimal(6, 2)
+  linhasFolha        Int      @default(1)
+  espacamentoLinhas  Decimal  @default(0) @db.Decimal(6, 2)
+  etiquetaLargura    Decimal  @db.Decimal(6, 2)
+  etiquetaAltura     Decimal  @db.Decimal(6, 2)
+  espacoSuperior     Decimal  @default(0) @db.Decimal(6, 2)
+  espacoInferior     Decimal  @default(0) @db.Decimal(6, 2)
+  espacoEsquerda     Decimal  @default(0) @db.Decimal(6, 2)
+  espacoDireita      Decimal  @default(0) @db.Decimal(6, 2)
+  linhasConteudo     Json
+  fonteTipo          String   @default("Helvetica")
+  fonteTamanho       Int      @default(8)
+  alinhamento        String   @default("C")
+  imagemLeituraTipo  String   @default("NENHUMA")
+  ativo              Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
 model Categoria {
   id        String   @id @default(uuid())
   nome      String   @unique
@@ -188,7 +305,10 @@ model Produto {
   fotoUrl            String? // caminho da imagem servida pelo backend (/uploads/...)
   colecao            String? // ex.: "Alto Verão", "Casual"
   estacao            String? // ex.: "Verão 2026", "Inverno 2026"
-  // Dados fiscais
+  // Dados fiscais. `grupoTributacaoId` aponta para um GrupoTributacao
+  // reutilizável; os campos explícitos abaixo, quando preenchidos, têm
+  // precedência sobre o grupo na emissão (ver resolverTributacaoProduto).
+  grupoTributacaoId  String?
   ncm                String?
   cest               String?
   origemMercadoria   String? // 0..8
@@ -203,7 +323,8 @@ model Produto {
   categoria        Categoria?     @relation(fields: [categoriaId], references: [id])
   marca            Marca?         @relation(fields: [marcaId], references: [id])
   fornecedorPadrao Fornecedor?    @relation("FornecedorPadrao", fields: [fornecedorPadraoId], references: [id])
-  escala           EscalaTamanho? @relation(fields: [escalaId], references: [id])
+  escala           EscalaTamanho?   @relation(fields: [escalaId], references: [id])
+  grupoTributacao  GrupoTributacao? @relation(fields: [grupoTributacaoId], references: [id])
   variacoes        Variacao[]
 
   @@index([nome])

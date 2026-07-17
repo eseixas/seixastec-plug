@@ -33,9 +33,11 @@ import apiKeysRoutes from './routes/apikeys.routes.js';
 import escalasRoutes from './routes/escalas.routes.js';
 import coresRoutes from './routes/cores.routes.js';
 import configRoutes from './routes/config.routes.js';
+import empresaRoutes from './routes/empresa.routes.js';
 import etiquetasRoutes from './routes/etiquetas.routes.js';
 import syncRoutes from './routes/sync.routes.js';
 import fiscalRoutes from './routes/fiscal.routes.js';
+import fiscalConfigRoutes from './routes/fiscal-config.routes.js';
 
 import { NODE_ROLE, IS_CENTRAL, IS_EDGE, LOJA_ID } from './config.js';
 import { iniciarWorkerSync } from './sync/worker.js';
@@ -81,6 +83,7 @@ app.use('/api/apikeys', authRequired, apiKeysRoutes);
 app.use('/api/escalas', authRequired, escalasRoutes);
 app.use('/api/cores', authRequired, coresRoutes);
 app.use('/api/config', authRequired, configRoutes);
+app.use('/api/empresa', authRequired, requireRole('ADMIN'), empresaRoutes);
 app.use('/api/etiquetas', authRequired, etiquetasRoutes);
 
 // Rotas de sincronização: só existem na CENTRAL (o edge é o cliente delas).
@@ -93,6 +96,10 @@ if (IS_CENTRAL) {
 // expõe a rota (somente leitura + reenvio bloqueado) para o admin mostrar o
 // status das notas sincronizadas via outbox.
 app.use('/api/fiscal', authRequired, fiscalRoutes);
+
+// Configurações fiscais granulares (grupos de tributação, séries, naturezas).
+// Escrita é restrita a ADMIN/GERENTE dentro do próprio router.
+app.use('/api/fiscal-config', authRequired, fiscalConfigRoutes);
 
 app.use(errorHandler);
 
