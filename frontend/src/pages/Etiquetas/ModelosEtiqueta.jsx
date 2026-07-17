@@ -11,7 +11,6 @@ import {
   Tbody,
   Td,
   Tr,
-  PageHeader,
   EmptyState,
   Spinner,
 } from '../../components/ui/index.js'
@@ -44,15 +43,14 @@ export default function ModelosEtiqueta() {
 
   return (
     <div>
-      <PageHeader
-        title="Modelos de Etiqueta"
-        subtitle="Cadastre formatos de etiqueta para impressão (Pimaco, térmica e customizados)"
-        action={
-          <Button icon={Plus} onClick={() => navigate('/etiquetas/modelos/novo')}>
-            Novo modelo
-          </Button>
-        }
-      />
+      <div className="mb-4 flex items-center justify-between">
+        <p className="text-sm text-gray-500">
+          Cadastre formatos de etiqueta para impressão (Pimaco, térmica e customizados)
+        </p>
+        <Button icon={Plus} size="sm" onClick={() => navigate('/etiquetas/modelos/novo')}>
+          Novo modelo
+        </Button>
+      </div>
 
       {isLoading ? (
         <Spinner />

@@ -1,4 +1,4 @@
-import { Routes, Route, Outlet } from 'react-router-dom'
+import { Routes, Route, Outlet, Navigate } from 'react-router-dom'
 import Layout from './components/layout/Layout.jsx'
 import ProtectedRoute from './components/layout/ProtectedRoute.jsx'
 import Login from './pages/Login.jsx'
@@ -27,7 +27,6 @@ import ComprasList from './pages/Compras/ComprasList.jsx'
 import CompraForm from './pages/Compras/CompraForm.jsx'
 import CompraDetail from './pages/Compras/CompraDetail.jsx'
 import Etiquetas from './pages/Etiquetas/Etiquetas.jsx'
-import ModelosEtiqueta from './pages/Etiquetas/ModelosEtiqueta.jsx'
 import ModeloEtiquetaForm from './pages/Etiquetas/ModeloEtiquetaForm.jsx'
 
 export default function App() {
@@ -72,7 +71,7 @@ export default function App() {
         </Route>
         <Route path="/lojas" element={<Lojas />} />
         <Route path="/etiquetas" element={<Etiquetas />} />
-        <Route path="/etiquetas/modelos" element={<ModelosEtiqueta />} />
+        <Route path="/etiquetas/modelos" element={<Navigate to="/etiquetas?aba=modelos" replace />} />
         <Route path="/etiquetas/modelos/novo" element={<ModeloEtiquetaForm />} />
         <Route path="/etiquetas/modelos/:id" element={<ModeloEtiquetaForm />} />
         <Route path="/notas-fiscais" element={<NotasFiscais />} />

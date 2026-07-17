@@ -38,6 +38,7 @@ import {
   PageHeader,
   EmptyState,
   Spinner,
+  Tabs,
 } from '../../components/ui/index.js'
 import { useToast } from '../../context/ToastContext.jsx'
 
@@ -1871,7 +1872,7 @@ function ConfiguracoesClientePanel() {
   )
 }
 
-const SECOES = [
+const ABAS = [
   {
     id: 'catalogo',
     label: 'Catálogo',
@@ -1928,8 +1929,8 @@ const SECOES = [
 export default function Configuracoes() {
   const [searchParams, setSearchParams] = useSearchParams()
   const secaoParam = searchParams.get('secao')
-  const secaoAtiva = SECOES.some((s) => s.id === secaoParam) ? secaoParam : SECOES[0].id
-  const secao = SECOES.find((s) => s.id === secaoAtiva) || SECOES[0]
+  const secaoAtiva = ABAS.some((s) => s.id === secaoParam) ? secaoParam : ABAS[0].id
+  const secao = ABAS.find((s) => s.id === secaoAtiva) || ABAS[0]
 
   function selecionarSecao(id) {
     setSearchParams((prev) => {
@@ -1946,36 +1947,11 @@ export default function Configuracoes() {
         subtitle="Gerencie dados da empresa, catálogo, PDV, clientes e integrações"
       />
 
-      <div className="flex flex-col gap-6 lg:flex-row">
-        <nav className="lg:w-56 lg:shrink-0">
-          <div className="flex gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-white p-1.5 lg:flex-col lg:overflow-visible">
-            {SECOES.map(({ id, label, icon: Icon }) => {
-              const ativa = id === secaoAtiva
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => selecionarSecao(id)}
-                  className={`flex shrink-0 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-200 lg:w-full ${
-                    ativa
-                      ? 'bg-indigo-50 text-indigo-700'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                  }`}
-                >
-                  <Icon size={18} />
-                  {label}
-                </button>
-              )
-            })}
-          </div>
-        </nav>
+      <Tabs tabs={ABAS} active={secaoAtiva} onChange={selecionarSecao} />
 
-        <div className="min-w-0 flex-1">
-          <div key={secaoAtiva} className="animate-fadeIn space-y-6">
-            <p className="text-sm text-gray-500">{secao.descricao}</p>
-            {secao.render()}
-          </div>
-        </div>
+      <div key={secaoAtiva} className="animate-fadeIn space-y-6">
+        <p className="text-sm text-gray-500">{secao.descricao}</p>
+        {secao.render()}
       </div>
     </div>
   )

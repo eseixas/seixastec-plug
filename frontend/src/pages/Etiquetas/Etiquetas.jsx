@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Search, Barcode, Printer, Trash2, Settings } from 'lucide-react'
+import { Search, Barcode, Printer, Trash2 } from 'lucide-react'
 import { api } from '../../lib/api.js'
 import { downloadBlob } from '../../lib/download.js'
 import { useToast } from '../../context/ToastContext.jsx'
+import ModelosEtiqueta from './ModelosEtiqueta.jsx'
 import {
   Button,
   Input,
@@ -20,11 +21,16 @@ import {
   PageHeader,
   EmptyState,
   Spinner,
+  Tabs,
 } from '../../components/ui/index.js'
 
-export default function Etiquetas() {
+const ABAS = [
+  { id: 'imprimir', label: 'Imprimir' },
+  { id: 'modelos', label: 'Modelos' },
+]
+
+function ImprimirEtiquetasPanel() {
   const toast = useToast()
-  const navigate = useNavigate()
 
   const [search, setSearch] = useState('')
   const [q, setQ] = useState('')
@@ -134,16 +140,6 @@ export default function Etiquetas() {
 
   return (
     <div>
-      <PageHeader
-        title="Etiquetas"
-        subtitle="Gere etiquetas com código de barras para impressão"
-        action={
-          <Button variant="secondary" icon={Settings} onClick={() => navigate('/etiquetas/modelos')}>
-            Gerenciar modelos
-          </Button>
-        }
-      />
-
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Coluna de busca + variações */}
         <div className="space-y-4 lg:col-span-2">
@@ -314,6 +310,36 @@ export default function Etiquetas() {
             </Button>
           </Card>
         </div>
+      </div>
+    </div>
+  )
+}
+
+export default function Etiquetas() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const abaParam = searchParams.get('aba')
+  const aba = ABAS.some((a) => a.id === abaParam) ? abaParam : ABAS[0].id
+
+  function selecionarAba(id) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('aba', id)
+      return next
+    })
+  }
+
+  return (
+    <div>
+      <PageHeader
+        title="Etiquetas"
+        subtitle="Gere etiquetas com código de barras e gerencie os modelos de impressão"
+      />
+
+      <Tabs tabs={ABAS} active={aba} onChange={selecionarAba} />
+
+      <div key={aba} className="animate-fadeIn">
+        {aba === 'imprimir' && <ImprimirEtiquetasPanel />}
+        {aba === 'modelos' && <ModelosEtiqueta />}
       </div>
     </div>
   )

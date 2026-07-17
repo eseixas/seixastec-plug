@@ -146,7 +146,7 @@ export default function ModeloEtiquetaForm() {
       }
       toast.success(isEdit ? 'Modelo atualizado com sucesso.' : 'Modelo criado com sucesso.')
       queryClient.invalidateQueries({ queryKey: ['etiquetas', 'modelos'] })
-      navigate('/etiquetas/modelos')
+      navigate('/etiquetas?aba=modelos')
     } catch (err) {
       toast.error(err?.message || 'Erro ao salvar modelo.')
     } finally {
@@ -162,7 +162,7 @@ export default function ModeloEtiquetaForm() {
         title={isEdit ? 'Editar modelo de etiqueta' : 'Novo modelo de etiqueta'}
         subtitle="Todas as medidas são em milímetros (mm)."
         action={
-          <Button variant="secondary" onClick={() => navigate('/etiquetas/modelos')}>
+          <Button variant="secondary" onClick={() => navigate('/etiquetas?aba=modelos')}>
             Cancelar
           </Button>
         }
@@ -302,7 +302,7 @@ export default function ModeloEtiquetaForm() {
         </Card>
 
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={() => navigate('/etiquetas/modelos')}>
+          <Button type="button" variant="secondary" onClick={() => navigate('/etiquetas?aba=modelos')}>
             Cancelar
           </Button>
           <Button type="submit" loading={saving}>
