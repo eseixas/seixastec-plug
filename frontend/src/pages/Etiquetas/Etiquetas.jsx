@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Search, Barcode, Printer, Trash2 } from 'lucide-react'
+import { Search, Barcode, Printer, Trash2, Settings } from 'lucide-react'
 import { api } from '../../lib/api.js'
 import { downloadBlob } from '../../lib/download.js'
 import { useToast } from '../../context/ToastContext.jsx'
 import {
   Button,
   Input,
+  Select,
   Table,
   Thead,
   Th,
@@ -22,12 +24,24 @@ import {
 
 export default function Etiquetas() {
   const toast = useToast()
+  const navigate = useNavigate()
 
   const [search, setSearch] = useState('')
   const [q, setQ] = useState('')
   const [produtoSelId, setProdutoSelId] = useState(null)
-  const [formato, setFormato] = useState('termica') // 'termica' | 'a4'
+  const [modeloId, setModeloId] = useState('')
+  const [posicaoInicial, setPosicaoInicial] = useState(1)
+  const [imprimirBorda, setImprimirBorda] = useState(false)
   const [gerando, setGerando] = useState(false)
+
+  const { data: modelos = [] } = useQuery({
+    queryKey: ['etiquetas', 'modelos'],
+    queryFn: () => api.get('/etiquetas/modelos'),
+  })
+
+  useEffect(() => {
+    if (!modeloId && modelos.length > 0) setModeloId(modelos[0].id)
+  }, [modelos, modeloId])
 
   // Lista de impressão acumulada: variacaoId -> { variacaoId, produtoNome, cor, tamanho, quantidade }
   const [lista, setLista] = useState({})
@@ -96,11 +110,17 @@ export default function Etiquetas() {
 
   async function handleGerar() {
     if (!podeGerar) return
+    if (!modeloId) {
+      toast.error('Selecione um modelo de etiqueta.')
+      return
+    }
     setGerando(true)
     try {
       const payload = {
         itens: itensLista.map((i) => ({ variacaoId: i.variacaoId, quantidade: i.quantidade })),
-        formato,
+        modeloId,
+        posicaoInicial: Number(posicaoInicial) || 1,
+        imprimirBorda,
       }
       const blob = await api.postBlob('/etiquetas/pdf', payload)
       downloadBlob(blob, 'etiquetas.pdf')
@@ -117,6 +137,11 @@ export default function Etiquetas() {
       <PageHeader
         title="Etiquetas"
         subtitle="Gere etiquetas com código de barras para impressão"
+        action={
+          <Button variant="secondary" icon={Settings} onClick={() => navigate('/etiquetas/modelos')}>
+            Gerenciar modelos
+          </Button>
+        }
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -245,25 +270,37 @@ export default function Etiquetas() {
               </ul>
             )}
 
-            <div className="mt-4 border-t border-gray-100 pt-4">
-              <div className="mb-1 block text-sm font-medium text-gray-700">Formato</div>
-              <div className="inline-flex w-full rounded-lg border border-gray-300 p-0.5">
-                {[
-                  { value: 'termica', label: 'Térmica (rolo)' },
-                  { value: 'a4', label: 'Folha A4' },
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setFormato(opt.value)}
-                    className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                      formato === opt.value ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
+            <div className="mt-4 space-y-4 border-t border-gray-100 pt-4">
+              <Select
+                label="Modelo"
+                value={modeloId}
+                onChange={(e) => setModeloId(e.target.value)}
+              >
+                {modelos.length === 0 && <option value="">Nenhum modelo cadastrado</option>}
+                {modelos.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.nome} — {m.codigo}
+                  </option>
                 ))}
-              </div>
+              </Select>
+
+              <Input
+                label="Começar na posição"
+                type="number"
+                min="1"
+                value={posicaoInicial}
+                onChange={(e) => setPosicaoInicial(e.target.value)}
+              />
+
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={imprimirBorda}
+                  onChange={(e) => setImprimirBorda(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                Imprimir borda na etiqueta
+              </label>
             </div>
 
             <Button

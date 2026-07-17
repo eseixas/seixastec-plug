@@ -2,114 +2,136 @@ import PDFDocument from 'pdfkit';
 
 // Formatação local de moeda em Real (não dá pra importar o helper do frontend).
 // Equivale a `new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })`.
-function formatBRL(value) {
+export function formatBRL(value) {
   const n = Number(value) || 0;
   return `R$ ${n.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`;
 }
 
 const MM = 2.83465; // 1mm em pontos
 
-// Desenha o conteúdo de UMA etiqueta dentro de uma caixa (x, y, w, h).
-// Reutilizado tanto pela versão térmica (1 caixa = página inteira) quanto pela
-// A4 (grade de caixas). Layout vertical centralizado.
-function desenharEtiqueta(doc, item, x, y, w, h) {
-  const pad = 4;
-  const innerX = x + pad;
-  const innerW = w - pad * 2;
-  let cursorY = y + pad;
+const ALINHAMENTO = { L: 'left', C: 'center', R: 'right' };
 
-  // Nome do produto (até 2 linhas, fonte pequena).
-  doc.font('Helvetica-Bold').fontSize(7);
-  const nome = item.produtoNome || '';
-  doc.text(nome, innerX, cursorY, {
-    width: innerW,
-    align: 'center',
-    lineBreak: true,
-    height: 18,
-    ellipsis: true,
-  });
-  cursorY += 18;
+// Fonte base -> [regular, negrito] embutidas no pdfkit.
+const FONTES = {
+  Helvetica: ['Helvetica', 'Helvetica-Bold'],
+  Times: ['Times-Roman', 'Times-Bold'],
+  Courier: ['Courier', 'Courier-Bold'],
+};
 
-  // Cor · Tamanho
-  const detalhe = [item.cor, item.tamanho].filter(Boolean).join(' · ');
-  doc.font('Helvetica').fontSize(6);
-  doc.text(detalhe, innerX, cursorY, { width: innerW, align: 'center' });
-  cursorY += 9;
-
-  // Preço (fonte maior/negrito).
-  doc.font('Helvetica-Bold').fontSize(10);
-  doc.text(formatBRL(item.precoVenda), innerX, cursorY, { width: innerW, align: 'center' });
-  cursorY += 13;
-
-  // Imagem do código de barras. Altura restante reservando espaço para o número.
-  const numeroH = 8;
-  const barcodeMaxH = y + h - pad - numeroH - cursorY;
-  if (item.barcodeImageBuffer && barcodeMaxH > 6) {
-    const bcH = Math.min(barcodeMaxH, 22);
-    const bcW = Math.min(innerW, innerW);
-    try {
-      doc.image(item.barcodeImageBuffer, innerX, cursorY, {
-        fit: [bcW, bcH],
-        align: 'center',
-        valign: 'top',
-      });
-    } catch {
-      /* imagem inválida: ignora, ainda mostra o número abaixo */
-    }
-    cursorY += bcH + 1;
+// Resolve o texto de uma linha de conteúdo a partir do item da etiqueta.
+function resolverCampo(item, linha) {
+  switch (linha.campo) {
+    case 'COMPANY_NAME':
+      return item.companyName || '';
+    case 'PRODUCT_CODE':
+      return item.codigo || '';
+    case 'PRODUCT_NAME':
+      return item.produtoNome || '';
+    case 'PRODUCT_CODE_NAME':
+      return [item.codigo, item.produtoNome].filter(Boolean).join(' - ');
+    case 'PRODUCT_CATEGORY':
+      return item.categoria || '';
+    case 'PRODUCT_VALUE':
+      return formatBRL(item.precoVenda);
+    case 'TEXT':
+      return linha.texto || '';
+    default:
+      return '';
   }
-
-  // Número do código em fonte monoespaçada pequena.
-  doc.font('Courier').fontSize(6);
-  doc.text(item.codigoBarras || '', innerX, cursorY, { width: innerW, align: 'center' });
 }
 
-// Etiqueta térmica (rolo): uma página por etiqueta, ~50x30mm.
-export async function gerarPdfTermica(itens) {
-  const largura = 50 * MM; // ~141.7pt
-  const altura = 30 * MM; // ~85pt
-  const doc = new PDFDocument({ size: [largura, altura], margin: 0 });
+// Desenha uma etiqueta dentro da célula (x, y, w, h) conforme o modelo.
+function desenharEtiqueta(doc, modelo, item, x, y, w, h) {
+  const [fonteRegular, fonteNegrito] = FONTES[modelo.fonteTipo] || FONTES.Helvetica;
+  const align = ALINHAMENTO[modelo.alinhamento] || 'center';
 
-  itens.forEach((item, idx) => {
-    if (idx > 0) doc.addPage({ size: [largura, altura], margin: 0 });
-    desenharEtiqueta(doc, item, 0, 0, largura, altura);
+  const innerX = x + modelo.espacoEsquerda * MM;
+  const innerY = y + modelo.espacoSuperior * MM;
+  const innerW = w - (modelo.espacoEsquerda + modelo.espacoDireita) * MM;
+  const innerH = h - (modelo.espacoSuperior + modelo.espacoInferior) * MM;
+
+  let cursorY = innerY;
+  const limiteY = innerY + innerH;
+  const linhas = Array.isArray(modelo.linhasConteudo) ? modelo.linhasConteudo : [];
+
+  linhas.forEach((linha, idx) => {
+    const texto = resolverCampo(item, linha);
+    if (!texto) return;
+
+    const destaque = idx === 0 || linha.campo === 'PRODUCT_VALUE';
+    const tamanho = linha.campo === 'PRODUCT_VALUE' ? modelo.fonteTamanho + 2 : modelo.fonteTamanho;
+    doc.font(destaque ? fonteNegrito : fonteRegular).fontSize(tamanho);
+    const alturaLinha = doc.currentLineHeight();
+    if (cursorY + alturaLinha > limiteY) return;
+
+    doc.text(texto, innerX, cursorY, { width: innerW, align, lineBreak: false, ellipsis: true });
+    cursorY += alturaLinha;
   });
 
-  return doc;
+  if (modelo.imagemLeituraTipo === 'NENHUMA' || !item.leituraImagemBuffer) return;
+
+  const mostraNumero = modelo.imagemLeituraTipo === 'BARCODE';
+  const numeroH = mostraNumero ? 8 : 0;
+  const imagemMaxH = limiteY - cursorY - numeroH;
+  if (imagemMaxH <= 6) return;
+
+  const imagemH = Math.min(imagemMaxH, modelo.imagemLeituraTipo === 'QRCODE' ? innerW : 22);
+  try {
+    doc.image(item.leituraImagemBuffer, innerX, cursorY, {
+      fit: [innerW, imagemH],
+      align,
+      valign: 'top',
+    });
+  } catch {
+    /* imagem inválida: ignora */
+  }
+  cursorY += imagemH + 1;
+
+  if (mostraNumero && cursorY < limiteY) {
+    doc.font('Courier').fontSize(6);
+    doc.text(item.codigoBarras || '', innerX, cursorY, { width: innerW, align });
+  }
 }
 
-// Folha A4 com grade de etiquetas: 3 colunas x 8 linhas = 24 por página.
-export async function gerarPdfA4(itens) {
-  const margem = 10 * MM;
-  const doc = new PDFDocument({ size: 'A4', margin: 0 });
+// Gera o PDF de etiquetas para um modelo. `itens` já vem achatado (uma entrada
+// por etiqueta física), com os campos resolvíveis (produtoNome, codigo, categoria,
+// precoVenda, companyName, codigoBarras, leituraImagemBuffer).
+export async function gerarPdfComModelo(modelo, itens, opcoes = {}) {
+  const { posicaoInicial = 1, imprimirBorda = false } = opcoes;
 
-  const pageW = doc.page.width; // 595.28pt
-  const pageH = doc.page.height; // 841.89pt
-  const cols = 3;
-  const rows = 8;
-  const gap = 3 * MM;
-
-  const usableW = pageW - margem * 2;
-  const usableH = pageH - margem * 2;
-  const cellW = (usableW - gap * (cols - 1)) / cols;
-  const cellH = (usableH - gap * (rows - 1)) / rows;
+  const folhaW = Number(modelo.folhaLargura) * MM;
+  const folhaH = Number(modelo.folhaAltura) * MM;
+  const cols = modelo.colunas;
+  const rows = modelo.linhasFolha;
+  const cellW = Number(modelo.etiquetaLargura) * MM;
+  const cellH = Number(modelo.etiquetaAltura) * MM;
+  const gapX = Number(modelo.espacamentoColunas) * MM;
+  const gapY = Number(modelo.espacamentoLinhas) * MM;
+  const margemX = Number(modelo.margemEsquerda) * MM;
+  const margemY = Number(modelo.margemTopo) * MM;
   const perPage = cols * rows;
 
+  const doc = new PDFDocument({ size: [folhaW, folhaH], margin: 0 });
+
   itens.forEach((item, idx) => {
-    const posInPage = idx % perPage;
-    if (idx > 0 && posInPage === 0) doc.addPage({ size: 'A4', margin: 0 });
+    const slot = idx + (posicaoInicial - 1);
+    const posInPage = slot % perPage;
+    if (slot > posicaoInicial - 1 && posInPage === 0) {
+      doc.addPage({ size: [folhaW, folhaH], margin: 0 });
+    }
 
     const col = posInPage % cols;
     const row = Math.floor(posInPage / cols);
-    const x = margem + col * (cellW + gap);
-    const y = margem + row * (cellH + gap);
+    const x = margemX + col * (cellW + gapX);
+    const y = margemY + row * (cellH + gapY);
 
-    // Moldura leve pra facilitar o recorte.
-    doc.save();
-    doc.lineWidth(0.3).strokeColor('#cccccc').rect(x, y, cellW, cellH).stroke();
-    doc.restore();
+    if (imprimirBorda) {
+      doc.save();
+      doc.lineWidth(0.3).strokeColor('#cccccc').rect(x, y, cellW, cellH).stroke();
+      doc.restore();
+    }
 
-    desenharEtiqueta(doc, item, x, y, cellW, cellH);
+    desenharEtiqueta(doc, modelo, item, x, y, cellW, cellH);
   });
 
   return doc;
