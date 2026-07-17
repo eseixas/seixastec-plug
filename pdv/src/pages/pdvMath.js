@@ -3,12 +3,37 @@
 export const toCents = (v) => Math.round(Number(v || 0) * 100)
 export const fromCents = (c) => c / 100
 
-export function calcSubtotal(itens) {
-  return itens.reduce((acc, i) => acc + toCents(i.precoUnit) * i.quantidade - toCents(i.desconto || 0), 0)
+// Desconto efetivo (em centavos) de um item da venda, aceitando o valor cru
+// em R$ (descontoModo 'R$') ou em percentual sobre o total bruto da linha
+// (descontoModo '%').
+export function descontoItemCents(item) {
+  const brutoLinha = toCents(item.precoUnit) * item.quantidade
+  if (item.descontoModo === '%') {
+    return Math.round((brutoLinha * (Number(item.desconto) || 0)) / 100)
+  }
+  return toCents(item.desconto || 0)
 }
 
-export function calcTotal(itens, desconto, acrescimo) {
-  return calcSubtotal(itens) - toCents(desconto || 0) + toCents(acrescimo || 0)
+export function somaDescontosItens(itens) {
+  return itens.reduce((acc, i) => acc + descontoItemCents(i), 0)
+}
+
+export function calcSubtotal(itens) {
+  return itens.reduce((acc, i) => acc + toCents(i.precoUnit) * i.quantidade - descontoItemCents(i), 0)
+}
+
+// Desconto efetivo (em centavos) da venda, a partir do valor digitado e do
+// modo escolhido ('R$' ou '%'). O percentual incide sobre o subtotal já
+// líquido dos descontos de item (subtotalCents = calcSubtotal(itens)).
+export function descontoVendaCents(subtotalCents, valor, modo) {
+  if (modo === '%') {
+    return Math.round((subtotalCents * (Number(valor) || 0)) / 100)
+  }
+  return toCents(valor || 0)
+}
+
+export function calcTotal(itens, desconto) {
+  return calcSubtotal(itens) - toCents(desconto || 0)
 }
 
 export function somaPagamentos(pagamentos) {

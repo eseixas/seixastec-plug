@@ -9,6 +9,7 @@ import { useToast } from '../context/ToastContext.jsx'
 import { formatCurrency, labelForma, fotoSrc } from '../lib/format.js'
 import {
   toCents, fromCents, calcSubtotal, calcTotal, somaPagamentos, estimarTaxa,
+  descontoItemCents, somaDescontosItens, descontoVendaCents,
 } from './pdvMath.js'
 import AprovacaoGerente from './AprovacaoGerente.jsx'
 
@@ -115,7 +116,7 @@ function FrenteCaixa({ caixa, onFechado }) {
   const [resultados, setResultados] = useState([])
   const [itens, setItens] = useState([])
   const [desconto, setDesconto] = useState(0)
-  const [acrescimo, setAcrescimo] = useState(0)
+  const [descontoModo, setDescontoModo] = useState('R$')
   const [cliente, setCliente] = useState(null)
   const [buscaCliente, setBuscaCliente] = useState('')
   const [clientesEnc, setClientesEnc] = useState([])
@@ -146,8 +147,10 @@ function FrenteCaixa({ caixa, onFechado }) {
   // Sempre que o desconto (venda ou item) deixa de ser zero, exige nova
   // aprovação — evita reaproveitar a aprovação de uma venda anterior.
   useEffect(() => {
-    if (Number(desconto) <= 0) setAprovadorDesconto(null)
-  }, [desconto])
+    const descontoVenda = descontoVendaCents(calcSubtotal(itens), desconto, descontoModo)
+    const descontoItens = somaDescontosItens(itens)
+    if (descontoVenda + descontoItens <= 0) setAprovadorDesconto(null)
+  }, [desconto, descontoModo, itens])
 
   // Busca de produtos (debounce simples)
   useEffect(() => {
@@ -167,7 +170,9 @@ function FrenteCaixa({ caixa, onFechado }) {
   }, [buscaCliente])
 
   const subtotal = calcSubtotal(itens)
-  const totalCents = calcTotal(itens, desconto, acrescimo)
+  const descontoEfetivoCents = descontoVendaCents(subtotal, desconto, descontoModo)
+  const descontoEfetivoReais = fromCents(descontoEfetivoCents)
+  const totalCents = calcTotal(itens, descontoEfetivoReais)
   const pagoCents = somaPagamentos(pagamentos)
   const restanteCents = totalCents - pagoCents
 
@@ -200,6 +205,7 @@ function FrenteCaixa({ caixa, onFechado }) {
         fotoUrl: v.produto?.fotoUrl || null,
         precoUnit: precoVariacao(v),
         desconto: 0,
+        descontoModo: 'R$',
         quantidade: 1,
       }]
     })
@@ -241,6 +247,10 @@ function FrenteCaixa({ caixa, onFechado }) {
     setItens((prev) => prev.filter((_, i) => i !== ix))
   }
 
+  function mudarDescontoItem(ix, patch) {
+    setItens((prev) => prev.map((i, ii) => (ii === ix ? { ...i, ...patch } : i)))
+  }
+
   function addPagamento(forma) {
     const restante = Math.max(fromCents(restanteCents), 0)
     setPagamentos((prev) => [...prev, {
@@ -265,12 +275,14 @@ function FrenteCaixa({ caixa, onFechado }) {
     if (pagamentos.some((p) => p.forma !== 'DINHEIRO' && !p.adquirenteId)) {
       return toast.error('Selecione a adquirente dos pagamentos com cartão/pix/link')
     }
-    const descontoNum = Number(desconto) || 0
+    const descontoItensCents = somaDescontosItens(itens)
+    const descontoTotalCents = descontoEfetivoCents + descontoItensCents
     const aprovador = aprovadorOverride ?? aprovadorDesconto
-    if (descontoNum > 0) {
+    if (descontoTotalCents > 0) {
       if (!descontoHabilitado) return toast.error('Desconto está desabilitado nas configurações do PDV')
+      // Mesmo denominador do backend: subtotal líquido dos descontos de item.
       if (descontoMaxPercentual != null && subtotal > 0) {
-        const pct = (descontoNum / fromCents(subtotal)) * 100
+        const pct = (descontoTotalCents / subtotal) * 100
         if (pct > descontoMaxPercentual) {
           return toast.error(`Desconto acima do limite permitido (${descontoMaxPercentual}%)`)
         }
@@ -288,14 +300,14 @@ function FrenteCaixa({ caixa, onFechado }) {
         pdvTerminalId: caixa.pdvTerminalId || null,
         clienteId: cliente?.id || null,
         vendedorId: vendedor?.id || null,
-        desconto: descontoNum,
-        acrescimo: Number(acrescimo) || 0,
+        desconto: descontoEfetivoReais,
+        acrescimo: 0,
         aprovadorId: aprovador?.id || null,
         itens: itens.map((i) => ({
           variacaoId: i.variacaoId,
           quantidade: i.quantidade,
           precoUnit: Number(i.precoUnit),
-          desconto: Number(i.desconto) || 0,
+          desconto: fromCents(descontoItemCents(i)),
         })),
         pagamentos: pagamentos.map((p) => ({
           forma: p.forma,
@@ -305,7 +317,7 @@ function FrenteCaixa({ caixa, onFechado }) {
         })),
       })
       setComprovante(venda)
-      setItens([]); setPagamentos([]); setDesconto(0); setAcrescimo(0); setCliente(null)
+      setItens([]); setPagamentos([]); setDesconto(0); setDescontoModo('R$'); setCliente(null)
       setVendedor(null)
       setAprovadorDesconto(null)
       setVersaoVitrine((n) => n + 1)
@@ -397,14 +409,30 @@ function FrenteCaixa({ caixa, onFechado }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {itens.map((i, ix) => (
-                    <tr key={ix} className="border-b">
+                  {itens.map((i, ix) => {
+                    const descItemCents = descontoItemCents(i)
+                    const totalBrutoLinha = i.precoUnit * i.quantidade
+                    const totalLiquidoLinha = fromCents(toCents(totalBrutoLinha) - descItemCents)
+                    return (
+                    <tr key={ix} className="border-b align-top">
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
                           <Thumb src={fotoSrc(i.fotoUrl)} size={36} />
                           <div className="min-w-0">
                             <div className="truncate font-medium">{i.nome}</div>
                             <div className="text-xs text-gray-500">{i.detalhe} · {i.sku}</div>
+                            {descontoHabilitado && (
+                              <div className="mt-1 flex items-center gap-1">
+                                <input type="number" step="0.01" min="0" value={i.desconto}
+                                  onChange={(e) => mudarDescontoItem(ix, { desconto: e.target.value })}
+                                  className="w-16 rounded border border-gray-300 px-1 py-0.5 text-right text-xs" />
+                                <select value={i.descontoModo} onChange={(e) => mudarDescontoItem(ix, { descontoModo: e.target.value })}
+                                  className="rounded border border-gray-300 px-1 py-0.5 text-xs">
+                                  <option value="R$">R$</option>
+                                  <option value="%">%</option>
+                                </select>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -416,12 +444,22 @@ function FrenteCaixa({ caixa, onFechado }) {
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right">{formatCurrency(i.precoUnit)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{formatCurrency(i.precoUnit * i.quantidade)}</td>
+                      <td className="px-3 py-2 text-right font-medium">
+                        {descItemCents > 0 ? (
+                          <div>
+                            <div className="text-xs text-gray-400 line-through">{formatCurrency(totalBrutoLinha)}</div>
+                            <div>{formatCurrency(totalLiquidoLinha)}</div>
+                          </div>
+                        ) : (
+                          formatCurrency(totalBrutoLinha)
+                        )}
+                      </td>
                       <td className="px-2 py-2 text-right">
                         <button onClick={() => removerItem(ix)} className="text-gray-400 hover:text-red-600"><Trash2 size={16} /></button>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             )}
@@ -492,15 +530,22 @@ function FrenteCaixa({ caixa, onFechado }) {
                   <span className="text-gray-600">
                     Desconto{descontoMaxPercentual != null ? ` (máx. ${descontoMaxPercentual}%)` : ''}
                   </span>
-                  <input type="number" step="0.01" min="0" value={desconto} onChange={(e) => setDesconto(e.target.value)}
-                    className="w-24 rounded border border-gray-300 px-2 py-1 text-right" />
+                  <div className="flex flex-col items-end gap-0.5">
+                    <div className="flex items-center gap-1">
+                      <input type="number" step="0.01" min="0" value={desconto} onChange={(e) => setDesconto(e.target.value)}
+                        className="w-20 rounded border border-gray-300 px-2 py-1 text-right" />
+                      <select value={descontoModo} onChange={(e) => setDescontoModo(e.target.value)}
+                        className="rounded border border-gray-300 px-1 py-1 text-xs">
+                        <option value="R$">R$</option>
+                        <option value="%">%</option>
+                      </select>
+                    </div>
+                    {descontoModo === '%' && (
+                      <span className="text-xs text-gray-400">= {formatCurrency(descontoEfetivoReais)}</span>
+                    )}
+                  </div>
                 </div>
               )}
-              <div className="flex items-center justify-between">
-                <span className="text-gray-600">Acréscimo</span>
-                <input type="number" step="0.01" min="0" value={acrescimo} onChange={(e) => setAcrescimo(e.target.value)}
-                  className="w-24 rounded border border-gray-300 px-2 py-1 text-right" />
-              </div>
               <div className="mt-1 flex items-center justify-between border-t pt-2 text-lg font-bold">
                 <span>Total</span>
                 <span className="text-brand-700">{formatCurrency(fromCents(totalCents))}</span>
