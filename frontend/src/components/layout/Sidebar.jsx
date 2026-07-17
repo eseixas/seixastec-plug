@@ -61,6 +61,7 @@ const sections = [
     items: [
       { to: '/lojas', label: 'Lojas & PDVs', icon: Building2 },
       { to: '/notas-fiscais', label: 'Notas Fiscais', icon: FileText },
+      { to: '/usuarios', label: 'Usuários', icon: UserCog, roles: ['ADMIN'] },
       {
         label: 'Configurações',
         icon: Settings,
@@ -68,7 +69,6 @@ const sections = [
           { to: '/configuracoes', label: 'Geral', icon: Settings },
           { to: '/fiscal/configuracoes', label: 'Fiscais', icon: Landmark },
           { to: '/etiquetas', label: 'Etiquetas', icon: Barcode },
-          { to: '/usuarios', label: 'Usuários', icon: UserCog, roles: ['ADMIN'] },
         ],
       },
     ],
