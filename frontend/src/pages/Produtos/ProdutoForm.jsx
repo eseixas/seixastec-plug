@@ -629,71 +629,6 @@ export default function ProdutoForm() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card title="Fotos do produto">
-          {(() => {
-            const itens = isEdit
-              ? fotosProduto.map((f) => ({ key: f.id, src: fotoSrc(f.url), fotoId: f.id, isNova: false }))
-              : fotosNovas.map((f, i) => ({ key: f.previewUrl, src: f.previewUrl, index: i, isNova: true }))
-
-            return (
-              <>
-                <div className="mb-4 flex flex-wrap gap-3">
-                  {itens.length === 0 && (
-                    <div className="flex h-[110px] w-[110px] items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50">
-                      <ImageIcon className="h-8 w-8 text-gray-400" />
-                    </div>
-                  )}
-                  {itens.map((item, idx) => (
-                    <div
-                      key={item.key}
-                      draggable
-                      onDragStart={() => handleDragStartFoto(idx)}
-                      onDragOver={handleDragOverFoto}
-                      onDrop={() => handleDropFoto(idx)}
-                      className="group relative h-[110px] w-[110px] cursor-move overflow-hidden rounded-lg border border-gray-200"
-                    >
-                      <img
-                        src={item.src}
-                        alt={`Foto ${idx + 1} do produto`}
-                        className="h-full w-full object-cover"
-                      />
-                      {idx === 0 && (
-                        <span className="absolute left-1 top-1 rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                          Principal
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          item.isNova ? handleRemoverFotoNova(item.index) : handleRemoverFoto(item.fotoId)
-                        }
-                        disabled={!item.isNova && removendoFotoId === item.fotoId}
-                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                        title="Remover foto"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                <label className="block text-sm font-medium text-gray-700">Adicionar fotos</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={handleFotoChange}
-                  disabled={enviandoFoto}
-                  className="mt-1 block text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
-                />
-                <p className="mt-1 text-xs text-gray-500">
-                  Imagens até 5MB cada. Arraste as miniaturas para reordenar — a primeira é a foto principal.
-                </p>
-              </>
-            )
-          })()}
-        </Card>
-
         <Card title="Dados gerais">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
@@ -827,6 +762,71 @@ export default function ProdutoForm() {
               Produto ativo
             </label>
           </div>
+        </Card>
+
+        <Card title="Fotos do produto">
+          {(() => {
+            const itens = isEdit
+              ? fotosProduto.map((f) => ({ key: f.id, src: fotoSrc(f.url), fotoId: f.id, isNova: false }))
+              : fotosNovas.map((f, i) => ({ key: f.previewUrl, src: f.previewUrl, index: i, isNova: true }))
+
+            return (
+              <>
+                <div className="mb-4 flex flex-wrap gap-3">
+                  {itens.length === 0 && (
+                    <div className="flex h-[110px] w-[110px] items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50">
+                      <ImageIcon className="h-8 w-8 text-gray-400" />
+                    </div>
+                  )}
+                  {itens.map((item, idx) => (
+                    <div
+                      key={item.key}
+                      draggable
+                      onDragStart={() => handleDragStartFoto(idx)}
+                      onDragOver={handleDragOverFoto}
+                      onDrop={() => handleDropFoto(idx)}
+                      className="group relative h-[110px] w-[110px] cursor-move overflow-hidden rounded-lg border border-gray-200"
+                    >
+                      <img
+                        src={item.src}
+                        alt={`Foto ${idx + 1} do produto`}
+                        className="h-full w-full object-cover"
+                      />
+                      {idx === 0 && (
+                        <span className="absolute left-1 top-1 rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                          Principal
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          item.isNova ? handleRemoverFotoNova(item.index) : handleRemoverFoto(item.fotoId)
+                        }
+                        disabled={!item.isNova && removendoFotoId === item.fotoId}
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                        title="Remover foto"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <label className="block text-sm font-medium text-gray-700">Adicionar fotos</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleFotoChange}
+                  disabled={enviandoFoto}
+                  className="mt-1 block text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Imagens até 5MB cada. Arraste as miniaturas para reordenar — a primeira é a foto principal.
+                </p>
+              </>
+            )
+          })()}
         </Card>
 
         <Card title="Dados fiscais">
