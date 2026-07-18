@@ -87,6 +87,13 @@ router.post('/:id/receber', asyncHandler(async (req, res) => {
 
   const resultado = await prisma.$transaction(async (tx) => {
     const recebivel = await tx.recebivel.findUniqueOrThrow({ where: { id: req.params.id } });
+    // Só recebíveis pendentes: receber duas vezes creditaria a conta em dobro.
+    if (recebivel.status !== 'PENDENTE') {
+      throw Object.assign(
+        new Error(`Recebível não está pendente (status atual: ${recebivel.status})`),
+        { status: 400 }
+      );
+    }
     const contaBancariaId = body.contaBancariaId || recebivel.contaBancariaId;
 
     const atualizado = await tx.recebivel.update({
@@ -117,7 +124,11 @@ router.put('/:id', asyncHandler(async (req, res) => {
   if (existente.vendaId != null) {
     throw Object.assign(new Error('Recebível originado de venda não pode ser editado diretamente'), { status: 400 });
   }
-  const recebivel = await prisma.recebivel.update({ where: { id: req.params.id }, data });
+  // Recebível manual não tem taxa: o líquido acompanha o bruto (como na criação).
+  const recebivel = await prisma.recebivel.update({
+    where: { id: req.params.id },
+    data: data.valorBruto !== undefined ? { ...data, valorLiquido: data.valorBruto } : data,
+  });
   res.json(recebivel);
 }));
 

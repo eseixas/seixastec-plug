@@ -9,6 +9,7 @@ import { enfileirar } from '../sync/outbox.js';
 import { enfileirarNfce } from '../fiscal/fila.js';
 import { resolverSeriePadrao } from '../fiscal/parametrosFiscais.js';
 import { creditarRecebiveisSemConta } from '../lib/creditarContaPrincipal.js';
+import { toCents, fromCents, totalItem, calcularTaxa, ratearParcelas } from '../lib/money.js';
 
 const router = Router();
 
@@ -53,7 +54,6 @@ async function validarAprovador(tx, aprovadorId) {
   return aprovador;
 }
 
-const round2 = (n) => Math.round(n * 100) / 100;
 const addDias = (base, dias) => {
   const d = new Date(base);
   d.setDate(d.getDate() + dias);
@@ -84,33 +84,20 @@ async function calcularPagamento(tx, pag) {
     }
   }
 
-  const taxaValor = round2((pag.valor * taxaPercentual) / 100 + taxaFixa);
-  const valorLiquido = round2(pag.valor - taxaValor);
+  // Toda a matemática em centavos inteiros (lib/money.js), espelhando o
+  // pdvMath.js do PDV — front e back chegam ao mesmo resultado exato.
+  const { taxaValor, valorLiquido } = calcularTaxa(pag.valor, taxaPercentual, taxaFixa);
 
   // Gera N parcelas a receber (crédito parcelado espaça de 30 em 30 dias).
-  const recebiveis = [];
-  const brutoParcela = round2(pag.valor / parcelas);
-  const taxaParcela = round2(taxaValor / parcelas);
-  let somaBruto = 0;
-  let somaTaxa = 0;
-  for (let i = 1; i <= parcelas; i++) {
-    const ultimo = i === parcelas;
-    const bruto = ultimo ? round2(pag.valor - somaBruto) : brutoParcela;
-    const tx_ = ultimo ? round2(taxaValor - somaTaxa) : taxaParcela;
-    somaBruto = round2(somaBruto + bruto);
-    somaTaxa = round2(somaTaxa + tx_);
-    recebiveis.push({
-      parcelaNumero: i,
-      totalParcelas: parcelas,
-      valorBruto: bruto,
-      taxaValor: tx_,
-      valorLiquido: round2(bruto - tx_),
-      dataPrevista: addDias(new Date(), prazo + (i - 1) * 30),
-      status: pag.forma === 'DINHEIRO' ? 'RECEBIDO' : 'PENDENTE',
-      recebidoEm: pag.forma === 'DINHEIRO' ? new Date() : null,
-      adquirenteId: pag.adquirenteId || null,
-    });
-  }
+  // O rateio joga o resíduo do arredondamento na última parcela.
+  const recebiveis = ratearParcelas(pag.valor, taxaValor, parcelas).map((p) => ({
+    ...p,
+    totalParcelas: parcelas,
+    dataPrevista: addDias(new Date(), prazo + (p.parcelaNumero - 1) * 30),
+    status: pag.forma === 'DINHEIRO' ? 'RECEBIDO' : 'PENDENTE',
+    recebidoEm: pag.forma === 'DINHEIRO' ? new Date() : null,
+    adquirenteId: pag.adquirenteId || null,
+  }));
 
   return { parcelas, taxaPercentual, taxaValor, valorLiquido, prazo, recebiveis };
 }
@@ -199,19 +186,31 @@ router.post('/', asyncHandler(async (req, res) => {
     }
   }
 
-  const subtotal = dados.itens.reduce(
-    (acc, i) => acc + i.precoUnit * i.quantidade - (i.desconto || 0),
+  // Totais em centavos inteiros (mesma matemática do pdvMath.js do PDV).
+  for (const i of dados.itens) {
+    if (toCents(i.desconto || 0) > toCents(i.precoUnit) * i.quantidade) {
+      throw Object.assign(new Error('Desconto do item maior que o valor do item'), { status: 400 });
+    }
+  }
+  const subtotalCents = dados.itens.reduce(
+    (acc, i) => acc + toCents(i.precoUnit) * i.quantidade - toCents(i.desconto || 0),
     0
   );
-  const total = round2(subtotal - (dados.desconto || 0) + (dados.acrescimo || 0));
-  const totalPago = dados.pagamentos.reduce((acc, p) => acc + p.valor, 0);
-  if (Math.abs(totalPago - total) > 0.01) {
+  const totalCents = subtotalCents - toCents(dados.desconto || 0) + toCents(dados.acrescimo || 0);
+  if (totalCents < 0) {
+    throw Object.assign(new Error('Desconto maior que o valor da venda'), { status: 400 });
+  }
+  const totalPagoCents = dados.pagamentos.reduce((acc, p) => acc + toCents(p.valor), 0);
+  if (totalPagoCents !== totalCents) {
     throw Object.assign(new Error('Soma dos pagamentos difere do total da venda'), { status: 400 });
   }
+  const subtotal = fromCents(subtotalCents);
+  const total = fromCents(totalCents);
 
   // Enforcement das regras de comportamento do PDV — não confiar só no front.
-  const descontoTotal =
-    (dados.desconto || 0) + dados.itens.reduce((acc, i) => acc + (i.desconto || 0), 0);
+  const descontoTotalCents =
+    toCents(dados.desconto || 0) + dados.itens.reduce((acc, i) => acc + toCents(i.desconto || 0), 0);
+  const descontoTotal = fromCents(descontoTotalCents);
   const cfgPdv = await prisma.configuracaoPdv.upsert({
     where: { id: 'singleton' },
     update: {},
@@ -236,16 +235,28 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 
   const venda = await prisma.$transaction(async (tx) => {
-    // Valida saldo por loja (EstoqueLocal) antes de debitar.
+    // Valida preço e saldo por loja (EstoqueLocal) antes de debitar.
     const semEstoque = [];
     for (const item of dados.itens) {
-      const variacao = await tx.variacao.findUniqueOrThrow({ where: { id: item.variacaoId } });
-      const saldo = await getSaldo(tx, lojaId, item.variacaoId);
-      if (saldo < item.quantidade) {
-        if (cfgPdv.bloquearVendaSemEstoque) {
+      const variacao = await tx.variacao.findUniqueOrThrow({
+        where: { id: item.variacaoId },
+        include: { produto: { select: { precoVenda: true } } },
+      });
+      // O preço unitário é o do catálogo — o cliente não define preço, só
+      // desconto (que passa pelas regras de limite/aprovação abaixo).
+      const precoCatalogo = variacao.precoVenda ?? variacao.produto.precoVenda;
+      if (toCents(item.precoUnit) !== toCents(precoCatalogo)) {
+        throw Object.assign(
+          new Error(`Preço do item ${variacao.sku} difere do preço de catálogo`),
+          { status: 400 }
+        );
+      }
+      // bloquearVendaSemEstoque=false permite finalizar mesmo sem saldo
+      // (estoque fica negativo e é acertado depois) — mesmo comportamento do PDV.
+      if (cfgPdv.bloquearVendaSemEstoque) {
+        const saldo = await getSaldo(tx, lojaId, item.variacaoId);
+        if (saldo < item.quantidade) {
           semEstoque.push({ variacaoId: item.variacaoId, sku: variacao.sku, saldo, solicitado: item.quantidade });
-        } else {
-          throw Object.assign(new Error(`Estoque insuficiente para SKU ${variacao.sku}`), { status: 400 });
         }
       }
     }
@@ -268,7 +279,7 @@ router.post('/', asyncHandler(async (req, res) => {
         usuarioId: req.user.sub,
         status: 'FINALIZADA',
         finalizadaEm: new Date(),
-        subtotal: round2(subtotal),
+        subtotal,
         desconto: dados.desconto || 0,
         acrescimo: dados.acrescimo || 0,
         total,
@@ -279,7 +290,7 @@ router.post('/', asyncHandler(async (req, res) => {
             quantidade: i.quantidade,
             precoUnit: i.precoUnit,
             desconto: i.desconto || 0,
-            total: round2(i.precoUnit * i.quantidade - (i.desconto || 0)),
+            total: totalItem(i.precoUnit, i.quantidade, i.desconto),
           })),
         },
       },
