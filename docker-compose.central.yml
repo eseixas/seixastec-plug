@@ -38,6 +38,7 @@ services:
       PORT: 4000
       NODE_ENV: ${NODE_ENV:-production}
       UPLOAD_DIR: /app/uploads
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
       # Token de sync da Matriz (semeado como EdgeNode). Use o mesmo no edge.
       MATRIZ_EDGE_TOKEN: ${MATRIZ_EDGE_TOKEN:-edge-matriz-dev-token}
     ports:

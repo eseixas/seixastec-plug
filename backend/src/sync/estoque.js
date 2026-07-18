@@ -27,26 +27,32 @@ export async function aplicarMovimento(tx, mov, opts = {}) {
   });
   const saldoAtual = atual ? atual.estoqueAtual : 0;
 
-  let novo;
-  if (mov.tipo === 'ENTRADA') novo = saldoAtual + mov.quantidade;
-  else if (mov.tipo === 'SAIDA') novo = saldoAtual - mov.quantidade;
-  else novo = mov.quantidade; // AJUSTE = saldo absoluto
+  // ENTRADA/SAIDA aplicam DELTA com increment atômico: duas transações
+  // concorrentes na mesma variação não se perdem (o "ler saldo e gravar
+  // absoluto" antigo descartava o movimento concorrente). AJUSTE continua
+  // absoluto por definição — é o único que grava saldo direto.
+  const delta =
+    mov.tipo === 'ENTRADA' ? mov.quantidade :
+    mov.tipo === 'SAIDA' ? -mov.quantidade :
+    mov.quantidade - saldoAtual; // AJUSTE = saldo absoluto
 
   await tx.estoqueLocal.upsert({
     where: { lojaId_variacaoId: { lojaId: mov.lojaId, variacaoId: mov.variacaoId } },
-    update: { estoqueAtual: novo },
-    create: { lojaId: mov.lojaId, variacaoId: mov.variacaoId, estoqueAtual: novo },
+    update: mov.tipo === 'AJUSTE'
+      ? { estoqueAtual: mov.quantidade }
+      : { estoqueAtual: { increment: delta } },
+    create: { lojaId: mov.lojaId, variacaoId: mov.variacaoId, estoqueAtual: saldoAtual + delta },
   });
 
   // Mantém Variacao.estoqueAtual como AGREGADO global (soma das lojas) aplicando
   // o mesmo delta. Na central vira o total de todas as lojas; no edge, o da loja.
-  const delta = novo - saldoAtual;
   if (delta !== 0) {
     await tx.variacao.update({
       where: { id: mov.variacaoId },
       data: { estoqueAtual: { increment: delta } },
     });
   }
+  const novo = saldoAtual + delta;
 
   await tx.movimentacaoEstoque.create({
     data: {

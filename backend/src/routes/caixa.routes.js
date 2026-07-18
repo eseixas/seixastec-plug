@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { IS_EDGE, LOJA_ID } from '../config.js';
 import { enfileirar } from '../sync/outbox.js';
+import { toCents, fromCents } from '../lib/money.js';
 
 const router = Router();
 
@@ -50,6 +51,10 @@ router.post('/:id/movimento', asyncHandler(async (req, res) => {
     })
     .parse(req.body);
   const mov = await prisma.$transaction(async (tx) => {
+    const caixa = await tx.caixa.findUniqueOrThrow({ where: { id: req.params.id } });
+    if (!caixa.aberto) {
+      throw Object.assign(new Error('Caixa já está fechado'), { status: 400 });
+    }
     const m = await tx.movimentoCaixa.create({
       data: { caixaId: req.params.id, tipo, valor, motivo: motivo || null },
     });
@@ -97,20 +102,29 @@ router.post('/:id/fechar', asyncHandler(async (req, res) => {
       vendas: { include: { pagamentos: true } },
     },
   });
+  if (!caixa.aberto) {
+    throw Object.assign(new Error('Caixa já está fechado'), { status: 400 });
+  }
 
-  const dinheiroVendas = caixa.vendas
+  // Somas em centavos inteiros para o resumo fechar exato.
+  const dinheiroVendasCents = caixa.vendas
     .filter((v) => v.status === 'FINALIZADA')
     .flatMap((v) => v.pagamentos)
     .filter((p) => p.forma === 'DINHEIRO')
-    .reduce((acc, p) => acc + Number(p.valor), 0);
-  const suprimentos = caixa.movimentos
+    .reduce((acc, p) => acc + toCents(p.valor), 0);
+  const suprimentosCents = caixa.movimentos
     .filter((m) => m.tipo === 'SUPRIMENTO')
-    .reduce((acc, m) => acc + Number(m.valor), 0);
-  const sangrias = caixa.movimentos
+    .reduce((acc, m) => acc + toCents(m.valor), 0);
+  const sangriasCents = caixa.movimentos
     .filter((m) => m.tipo === 'SANGRIA')
-    .reduce((acc, m) => acc + Number(m.valor), 0);
+    .reduce((acc, m) => acc + toCents(m.valor), 0);
 
-  const esperadoDinheiro = Number(caixa.valorAbertura) + dinheiroVendas + suprimentos - sangrias;
+  const esperadoCents =
+    toCents(caixa.valorAbertura) + dinheiroVendasCents + suprimentosCents - sangriasCents;
+  const dinheiroVendas = fromCents(dinheiroVendasCents);
+  const suprimentos = fromCents(suprimentosCents);
+  const sangrias = fromCents(sangriasCents);
+  const esperadoDinheiro = fromCents(esperadoCents);
 
   const atualizado = await prisma.$transaction(async (tx) => {
     const c = await tx.caixa.update({
@@ -131,7 +145,7 @@ router.post('/:id/fechar', asyncHandler(async (req, res) => {
       sangrias,
       esperadoDinheiro,
       informado: valorFechamento,
-      diferenca: valorFechamento - esperadoDinheiro,
+      diferenca: fromCents(toCents(valorFechamento) - esperadoCents),
     },
   });
 }));

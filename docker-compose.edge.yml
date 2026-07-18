@@ -40,6 +40,7 @@ services:
       PORT: 4000
       NODE_ENV: ${NODE_ENV:-production}
       UPLOAD_DIR: /app/uploads
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
       # Identidade da loja e credenciais de sync com a central.
       LOJA_ID: ${LOJA_ID}
       EDGE_SYNC_TOKEN: ${EDGE_SYNC_TOKEN}

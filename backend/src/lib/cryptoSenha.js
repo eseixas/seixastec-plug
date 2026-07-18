@@ -3,8 +3,7 @@
 // A chave é derivada do JWT_SECRET via scrypt (não reutilizamos o JWT_SECRET
 // bruto como chave AES). NUNCA logar o valor em claro.
 import crypto from 'crypto';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+import { JWT_SECRET } from './secret.js';
 const SALT = 'seixastec-plug:cryptoSenha:v1'; // fixo — só precisa ser estável, não secreto
 const ALGO = 'aes-256-gcm';
 const IV_LEN = 12;

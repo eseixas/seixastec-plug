@@ -3,9 +3,13 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
-import { hashApiKey } from '../middleware/auth.js';
+import { hashApiKey, requireRole } from '../middleware/auth.js';
 
 const router = Router();
+
+// Leitura fica aberta a qualquer autenticado (PDV usa lojas/terminais);
+// escrita e provisionamento de edge são administrativos.
+const adminOuGerente = requireRole('ADMIN', 'GERENTE');
 
 const lojaSchema = z.object({
   nome: z.string().min(1),
@@ -39,19 +43,19 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(lojas);
 }));
 
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', adminOuGerente, asyncHandler(async (req, res) => {
   const data = lojaSchema.parse(req.body);
   const loja = await prisma.loja.create({ data });
   res.status(201).json(loja);
 }));
 
-router.put('/:id', asyncHandler(async (req, res) => {
+router.put('/:id', adminOuGerente, asyncHandler(async (req, res) => {
   const data = lojaSchema.partial().parse(req.body);
   const loja = await prisma.loja.update({ where: { id: req.params.id }, data });
   res.json(loja);
 }));
 
-router.delete('/:id', asyncHandler(async (req, res) => {
+router.delete('/:id', adminOuGerente, asyncHandler(async (req, res) => {
   await prisma.loja.delete({ where: { id: req.params.id } });
   res.status(204).end();
 }));
@@ -77,7 +81,9 @@ router.get('/edges', asyncHandler(async (req, res) => {
 
 // Provisiona (ou regenera o token de) um edge para uma loja. Retorna o token
 // BRUTO uma única vez — configure-o no EDGE_SYNC_TOKEN do edge daquela loja.
-router.post('/edges', asyncHandler(async (req, res) => {
+// Gerar/regenerar token dá acesso total ao canal de sync (inclusive hashes de
+// senha dos usuários que descem ao edge) — restrito a ADMIN.
+router.post('/edges', requireRole('ADMIN'), asyncHandler(async (req, res) => {
   const { lojaId } = z.object({ lojaId: z.string().min(1) }).parse(req.body);
   const loja = await prisma.loja.findUniqueOrThrow({ where: { id: lojaId } });
   const token = `edge_${crypto.randomBytes(24).toString('hex')}`;
@@ -98,19 +104,19 @@ router.get('/terminais/todos', asyncHandler(async (req, res) => {
   res.json(terminais);
 }));
 
-router.post('/terminais', asyncHandler(async (req, res) => {
+router.post('/terminais', adminOuGerente, asyncHandler(async (req, res) => {
   const data = terminalSchema.parse(req.body);
   const terminal = await prisma.pDVTerminal.create({ data });
   res.status(201).json(terminal);
 }));
 
-router.put('/terminais/:id', asyncHandler(async (req, res) => {
+router.put('/terminais/:id', adminOuGerente, asyncHandler(async (req, res) => {
   const data = terminalSchema.partial().parse(req.body);
   const terminal = await prisma.pDVTerminal.update({ where: { id: req.params.id }, data });
   res.json(terminal);
 }));
 
-router.delete('/terminais/:id', asyncHandler(async (req, res) => {
+router.delete('/terminais/:id', adminOuGerente, asyncHandler(async (req, res) => {
   await prisma.pDVTerminal.delete({ where: { id: req.params.id } });
   res.status(204).end();
 }));

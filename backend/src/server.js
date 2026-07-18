@@ -44,7 +44,14 @@ import { iniciarWorkerSync } from './sync/worker.js';
 import { iniciarWorkerFiscal } from './fiscal/worker.js';
 
 const app = express();
-app.use(cors());
+// CORS: allowlist opcional via CORS_ORIGINS (lista separada por vírgula, ex.:
+// "https://admin.exemplo.com,https://pdv.exemplo.com"). Sem a variável, mantém
+// aberto (comportamento anterior — auth é por header, não cookie).
+const corsOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+app.use(cors(corsOrigins.length ? { origin: corsOrigins } : {}));
 app.use(express.json({ limit: '10mb' })); // payloads de sync (lotes de vendas)
 
 app.get('/health', (req, res) =>
@@ -79,7 +86,7 @@ app.use('/api/financeiro/transferencias', authRequired, requireRole('ADMIN', 'FI
 app.use('/api/financeiro/conciliacao', authRequired, requireRole('ADMIN', 'FINANCEIRO'), conciliacaoRoutes);
 app.use('/api/lojas', authRequired, lojasRoutes);
 app.use('/api/usuarios', authRequired, requireRole('ADMIN'), usuariosRoutes);
-app.use('/api/apikeys', authRequired, apiKeysRoutes);
+app.use('/api/apikeys', authRequired, requireRole('ADMIN'), apiKeysRoutes);
 app.use('/api/escalas', authRequired, escalasRoutes);
 app.use('/api/cores', authRequired, coresRoutes);
 app.use('/api/config', authRequired, configRoutes);
