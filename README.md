@@ -51,15 +51,15 @@ PDVs**.
 ## Módulos
 
 - **Dashboard** — faturamento dia/mês, ticket médio, série de vendas, top produtos, estoque baixo.
-- **Produtos** — categorias, marcas e produtos com **grade** (variações por tamanho/cor, SKU e estoque próprios), **coleção/estação** e **foto do produto**.
+- **Produtos** — categorias, marcas e produtos com **grade** (variações por tamanho/cor, SKU e estoque próprios), **coleção/estação** e **múltiplas fotos** com reordenação por arrastar (a primeira é a principal).
 - **Clientes** e **Fornecedores**.
 - **Estoque** — movimentações (entrada/saída/ajuste) e alerta de mínimo.
-- **Vendas** — histórico, detalhe e cancelamento (com devolução de estoque).
+- **Vendas** — histórico, detalhe e cancelamento (com devolução de estoque); colunas de **Vendedor** e **Operador**.
 - **Adquirentes & Taxas** — operadoras de pagamento com taxa e prazo por forma e por nº de parcelas (crédito).
 - **Recebíveis** — parcelas a receber geradas por cada pagamento (bruto → taxa → líquido → data prevista), com baixa manual.
 - **Lojas & PDVs** — cadastro de lojas/localidades e terminais de PDV.
-- **Configurações** — categorias, marcas e **API Keys** para integrações externas.
-- **PDV** (app separado) — abertura/fechamento de caixa, sangria/suprimento, busca por nome/SKU/código de barras (com foto), **vitrine de produtos em estoque ordenada pelos últimos vendidos** (miniaturas com scroll infinito), carrinho, e pagamentos por **Dinheiro, Pix, Débito, Crédito, Depósito em Conta e Link de Pagamento** (com adquirente/parcelas e cálculo de taxa/líquido).
+- **Configurações** — navegação por seções em tabs (inclui **Etiquetas** com modelos integrados) e **API Keys** para integrações externas; **Usuários** como item direto de Administração.
+- **PDV** (app separado) — abertura/fechamento de caixa, sangria/suprimento, busca por nome/SKU/código de barras (com foto), **vitrine de produtos em estoque ordenada pelos últimos vendidos** (miniaturas com scroll infinito), carrinho com **desconto por item e na venda (% ou R$)**, **vendedor opcional** na venda, e pagamentos por **Dinheiro, Pix, Débito, Crédito, Depósito em Conta e Link de Pagamento** (com adquirente/parcelas e cálculo de taxa/líquido).
 
 ## Como rodar
 
