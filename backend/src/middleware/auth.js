@@ -1,8 +1,7 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+import { JWT_SECRET } from '../lib/secret.js';
 
 export function signToken(user) {
   return jwt.sign(
@@ -29,16 +28,18 @@ export async function authRequired(req, res, next) {
       if (!registro || !registro.ativo) {
         return res.status(401).json({ error: 'API Key inválida' });
       }
+      // A chave opera como o usuário vinculado: sem usuário (ou com usuário
+      // desativado) ela não autentica — e nunca assume papel por padrão.
+      if (!registro.usuario || !registro.usuario.ativo) {
+        return res.status(401).json({ error: 'API Key sem usuário ativo associado' });
+      }
       // Atualiza último uso sem bloquear a requisição.
       prisma.apiKey.update({ where: { id: registro.id }, data: { ultimoUso: new Date() } }).catch(() => {});
       req.user = {
-        sub: registro.usuarioId || registro.usuario?.id,
-        role: registro.usuario?.role || 'ADMIN',
+        sub: registro.usuario.id,
+        role: registro.usuario.role,
         viaApiKey: true,
       };
-      if (!req.user.sub) {
-        return res.status(401).json({ error: 'API Key sem usuário associado' });
-      }
       return next();
     } catch {
       return res.status(401).json({ error: 'Falha ao validar API Key' });
