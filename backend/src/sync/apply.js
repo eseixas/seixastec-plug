@@ -112,7 +112,13 @@ async function aplicarVenda(tx, v) {
 
 async function aplicarVendaCancelada(tx, p) {
   const v = await tx.venda.findUnique({ where: { id: p.id } });
-  if (!v || v.status === 'CANCELADA') return { aplicado: false };
+  // Venda ainda não chegou (ex.: o evento 'venda' falhou neste lote): NÃO
+  // confirmar — lançar faz o evento cair em `falhas` e ser reenviado depois
+  // que a venda aplicar. Ack aqui perderia o cancelamento para sempre.
+  if (!v) {
+    throw new Error(`venda ${p.id} ainda não sincronizada; cancelamento será reenviado`);
+  }
+  if (v.status === 'CANCELADA') return { aplicado: false };
   await tx.recebivel.updateMany({
     where: { vendaId: p.id, status: 'PENDENTE' },
     data: { status: 'CANCELADO' },
